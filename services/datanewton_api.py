@@ -328,6 +328,50 @@ class DataNewtonAPI:
         except Exception as e:
             logger.error(f"Error fetching arbitration data: {e}")
             return ""
+
+    async def get_arbitration_stats(self, inn: str) -> Dict[str, Any]:
+        """Вернуть метрики по арбитражам: open_count, open_sum, last_doc_date (по открытым)."""
+        try:
+            async with aiohttp.ClientSession() as session:
+                # Открытые дела
+                url = f"{self.base_url}/arbitration-cases"
+                params_open = {"key": self.api_key, "inn": inn, "status": "OPEN", "limit": 1000}
+                async with session.get(url, headers=self.headers, params=params_open) as resp_open:
+                    data_open = await resp_open.json() if resp_open.status == 200 else {}
+                open_list = data_open.get("data", []) if isinstance(data_open, dict) else []
+                open_count = data_open.get("total_cases", len(open_list)) or 0
+                open_sum = 0
+                last_doc_ts = 0
+                for case in open_list:
+                    try:
+                        s = case.get("sum")
+                        if isinstance(s, (int, float)):
+                            open_sum += s
+                        ts = case.get("last_document_date")
+                        if isinstance(ts, (int, float)):
+                            last_doc_ts = max(last_doc_ts, int(ts))
+                    except Exception:
+                        continue
+
+                # Преобразуем дату
+                last_doc_date = ""
+                if last_doc_ts:
+                    from datetime import datetime
+                    try:
+                        # last_document_date приходит в мс
+                        dt = datetime.fromtimestamp(last_doc_ts / 1000)
+                        last_doc_date = dt.strftime("%d.%m.%y")
+                    except Exception:
+                        last_doc_date = ""
+
+                return {
+                    "arbitration_open_count": str(open_count),
+                    "arbitration_open_sum": str(int(open_sum)) if open_sum else "0",
+                    "arbitration_last_doc_date": last_doc_date,
+                }
+        except Exception as e:
+            logger.error(f"Error fetching arbitration stats: {e}")
+            return {"arbitration_open_count": "0", "arbitration_open_sum": "0", "arbitration_last_doc_date": ""}
     
     async def get_full_company_data(self, inn: str) -> Optional[Dict[str, Any]]:
         """Получить полные данные компании включая финансы и контракты"""
@@ -363,11 +407,18 @@ class DataNewtonAPI:
             company_data["okpd_name"] = ""
         
         try:
-            arbitration = await self.get_arbitration_data(inn)
-            company_data["arbitration"] = arbitration
+            arb_stats = await self.get_arbitration_stats(inn)
+            company_data.update(arb_stats)
+            # Для обратной совместимости поле arbitration = количество активных
+            company_data["arbitration"] = arb_stats.get("arbitration_open_count", "0")
         except Exception as e:
             logger.debug(f"Arbitration data not available: {e}")
-            company_data["arbitration"] = ""
+            company_data.update({
+                "arbitration": "0",
+                "arbitration_open_count": "0",
+                "arbitration_open_sum": "0",
+                "arbitration_last_doc_date": "",
+            })
         
         return company_data
     

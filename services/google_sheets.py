@@ -99,7 +99,9 @@ class GoogleSheetsService:
              "Кредиторская задолженность за прошлый год (тыс рублей)",
              "Регион(+n часов к Москве)", "ОКВЭД", "ОКВЭД (основной)",
              "Госконтракты, сумма заключенных за всё время", 
-             "Арбитражные дела, сумма активных арбитраж", 
+             "Арбитражи (активные, кол-во)",
+             "Арбитражи (активные, сумма)",
+             "Арбитражи (последний документ, дата)", 
              "Банкротство (да/нет)", "Телефон", "Почта", 
              "ОКПД (основной)", "Наименование ОКПД", "ОКВЭД, название",
              "Дата первого звонка"
@@ -110,10 +112,10 @@ class GoogleSheetsService:
             'values': headers
         }
         
-        # Обновляем заголовки (A-Z = 26 колонок)
+        # Обновляем заголовки с запасом по ширине (A-AZ)
         self.service.spreadsheets().values().update(
             spreadsheetId=sheet_id,
-            range='A1:Z1',
+            range='A1:AZ1',
             valueInputOption='RAW',
             body=request
         ).execute()
@@ -210,7 +212,7 @@ class GoogleSheetsService:
             # Получаем текущие данные
             result = self.service.spreadsheets().values().get(
                 spreadsheetId=sheet_id,
-                range='A:Z'
+                range='A:AZ'
             ).execute()
             
             values = result.get('values', [])
@@ -239,7 +241,9 @@ class GoogleSheetsService:
                 call_data.get('okved', ''),
                 call_data.get('okved_main', ''),
                 call_data.get('gov_contracts', ''),
-                call_data.get('arbitration', ''),
+                call_data.get('arbitration_open_count', ''),
+                call_data.get('arbitration_open_sum', ''),
+                call_data.get('arbitration_last_doc_date', ''),
                 call_data.get('bankruptcy', ''),
                 call_data.get('phone', ''),
                 call_data.get('email', ''),
@@ -255,7 +259,7 @@ class GoogleSheetsService:
             
             self.service.spreadsheets().values().append(
                 spreadsheetId=sheet_id,
-                range=f'A{row_num}:Z{row_num}',
+                range=f'A{row_num}:AZ{row_num}',
                 valueInputOption='RAW',
                 insertDataOption='INSERT_ROWS',
                 body=request
@@ -273,7 +277,7 @@ class GoogleSheetsService:
             # Ищем строку с нужным ИНН
             result = self.service.spreadsheets().values().get(
                 spreadsheetId=sheet_id,
-                range='A:Z'
+                range='A:AZ'
             ).execute()
             
             values = result.get('values', [])
@@ -372,7 +376,7 @@ class GoogleSheetsService:
             # Получаем текущие данные
             result = self.service.spreadsheets().values().get(
                 spreadsheetId=settings.supervisor_sheet_id,
-                range='A:Z'
+                range='A:AZ'
             ).execute()
             
             values = result.get('values', [])
