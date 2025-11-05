@@ -166,10 +166,47 @@ class GoogleSheetsService:
             spreadsheetId=sheet_id,
             body=format_request
         ).execute()
+
+    async def _ensure_headers(self, sheet_id: str) -> None:
+        """Проверяет заголовки листа менеджера и при несовпадении приводит к актуальному виду.
+        Это предотвращает смещение значений по колонкам, если старый лист имеет иную структуру.
+        """
+        try:
+            expected = [
+                "Наименование компании", "ИНН", "ФИО ЛПР", "Телефон",
+                "Дата звонка будущая",
+                "История звонков (все комментарии)",
+                "Финансы (выручка прошлый год) тыс рублей",
+                "Финансы (выручка позапрошлый год) тыс рублей",
+                "Капитал и резервы за прошлый год (тыс рублей)",
+                "Основные средства за прошлый год (тыс рублей)",
+                "Дебеторская задолженность за прошлый год (тыс рублей)",
+                "Кредиторская задолженность за прошлый год (тыс рублей)",
+                "Регион(+n часов к Москве)", "ОКВЭД", "ОКВЭД (основной)",
+                "Госконтракты, сумма заключенных за всё время",
+                "Арбитражные дела, сумма активных арбитраж",
+                "Банкротство (да/нет)", "Телефон", "Почта",
+                "ОКПД (основной)", "Наименование ОКПД", "ОКВЭД, название",
+                "Дата первого звонка"
+            ]
+
+            result = self.service.spreadsheets().values().get(
+                spreadsheetId=sheet_id,
+                range='A1:Z1'
+            ).execute()
+            current = (result.get('values') or [[]])[0]
+
+            if current != expected:
+                logger.info("Sheet headers mismatch detected — updating to the latest structure")
+                await self._setup_sheet_headers(sheet_id)
+        except Exception as e:
+            logger.warning(f"Unable to verify/update headers: {e}")
     
     async def add_new_call(self, sheet_id: str, call_data: Dict[str, Any]) -> bool:
         """Добавить данные о новом звонке"""
         try:
+            # Гарантируем корректные заголовки перед записью
+            await self._ensure_headers(sheet_id)
             # Получаем текущие данные
             result = self.service.spreadsheets().values().get(
                 spreadsheetId=sheet_id,
@@ -452,7 +489,7 @@ class GoogleSheetsService:
             # Получаем все данные
             result = self.service.spreadsheets().values().get(
                 spreadsheetId=sheet_id,
-                range='A:W'
+                range='A:Z'
             ).execute()
             
             values = result.get('values', [])
