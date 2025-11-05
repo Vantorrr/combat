@@ -101,7 +101,7 @@ class GoogleSheetsService:
              "Госконтракты, сумма заключенных за всё время", 
              "Арбитражные дела, сумма активных арбитраж", 
              "Банкротство (да/нет)", "Телефон", "Почта", 
-             "ОКПД (основной)", "ОКВЭД, название",
+             "ОКПД (основной)", "Наименование ОКПД", "ОКВЭД, название",
              "Дата первого звонка"
             ]
         ]
@@ -110,10 +110,10 @@ class GoogleSheetsService:
             'values': headers
         }
         
-        # Обновляем заголовки (A-Y = 25 колонок)
+        # Обновляем заголовки (A-Z = 26 колонок)
         self.service.spreadsheets().values().update(
             spreadsheetId=sheet_id,
-            range='A1:Y1',
+            range='A1:Z1',
             valueInputOption='RAW',
             body=request
         ).execute()
@@ -173,7 +173,7 @@ class GoogleSheetsService:
             # Получаем текущие данные
             result = self.service.spreadsheets().values().get(
                 spreadsheetId=sheet_id,
-                range='A:Y'
+                range='A:Z'
             ).execute()
             
             values = result.get('values', [])
@@ -207,6 +207,7 @@ class GoogleSheetsService:
                 call_data.get('phone', ''),
                 call_data.get('email', ''),
                 call_data.get('okpd', ''),  # ОКПД (основной)
+                call_data.get('okpd_name', ''),  # Наименование ОКПД
                 call_data.get('okved_name', ''),  # ОКВЭД, название
                 datetime.now().strftime('%d.%m.%y')  # Дата первого звонка
             ]
@@ -217,7 +218,7 @@ class GoogleSheetsService:
             
             self.service.spreadsheets().values().append(
                 spreadsheetId=sheet_id,
-                range=f'A{row_num}:Y{row_num}',
+                range=f'A{row_num}:Z{row_num}',
                 valueInputOption='RAW',
                 insertDataOption='INSERT_ROWS',
                 body=request
@@ -235,7 +236,7 @@ class GoogleSheetsService:
             # Ищем строку с нужным ИНН
             result = self.service.spreadsheets().values().get(
                 spreadsheetId=sheet_id,
-                range='A:Y'
+                range='A:Z'
             ).execute()
             
             values = result.get('values', [])
@@ -296,7 +297,7 @@ class GoogleSheetsService:
         try:
             result = self.service.spreadsheets().values().get(
                 spreadsheetId=sheet_id,
-                range='A:Y'
+                range='A:Z'
             ).execute()
             
             values = result.get('values', [])
@@ -331,7 +332,7 @@ class GoogleSheetsService:
             # Получаем текущие данные
             result = self.service.spreadsheets().values().get(
                 spreadsheetId=settings.supervisor_sheet_id,
-                range='A:Y'
+                range='A:Z'
             ).execute()
             
             values = result.get('values', [])
@@ -385,7 +386,7 @@ class GoogleSheetsService:
                 
                 # Обновляем менеджера
                 updates.append({
-                    'range': f'X{company_row}',
+                    'range': f'Y{company_row}',
                     'values': [[manager_name]]
                 })
                 
@@ -419,14 +420,15 @@ class GoogleSheetsService:
                     call_data.get('phone', ''),  # S - Телефон (дубль)
                     call_data.get('email', ''),  # T - Почта
                     call_data.get('okpd', ''),  # U - ОКПД (основной)
-                    call_data.get('okved_name', ''),  # V - ОКВЭД, название
-                    current_date,  # W - Дата первого звонка
-                    manager_name  # X - Менеджер
+                    call_data.get('okpd_name', ''),  # V - Наименование ОКПД
+                    call_data.get('okved_name', ''),  # W - ОКВЭД, название
+                    current_date,  # X - Дата первого звонка
+                    manager_name  # Y - Менеджер
                 ]
                 
                 self.service.spreadsheets().values().append(
                     spreadsheetId=settings.supervisor_sheet_id,
-                    range='A:X',
+                    range='A:Y',
                     valueInputOption='RAW',
                     body={'values': [row_data]}
                 ).execute()

@@ -88,6 +88,15 @@ class DataNewtonAPI:
                 if negative_lists.get("bankruptcy", {}).get("active", False):
                     bankruptcy = "да"
             
+            # Получаем email из контактов
+            email = ""
+            contacts = company.get("contacts")
+            if contacts and isinstance(contacts, list):
+                for contact in contacts:
+                    if contact.get("type") == "email":
+                        email = contact.get("value", "")
+                        break
+            
             return {
                 "inn": raw_data.get("inn"),
                 "ogrn": raw_data.get("ogrn"),  # Нужен для governmentContractsStat
@@ -103,6 +112,7 @@ class DataNewtonAPI:
                 "registration_date": company.get("registration_date", ""),
                 "status": company.get("status", {}).get("status_rus_short", ""),
                 "region": region,
+                "email": email,
                 "gov_contracts": "",  # Требует отдельный запрос
                 "arbitration": "",  # Требует отдельный запрос
                 "bankruptcy": bankruptcy
@@ -137,30 +147,30 @@ class DataNewtonAPI:
                         revenue = ""
                         revenue_previous = ""
                         
-                        # Получаем финансовые результаты
+                        # Получаем финансовые результаты (строка 2110 - выручка)
                         fin_results = data.get("fin_results", {})
                         if fin_results:
-                            years = fin_results.get("years", [])
-                            if years:
-                                # Берем последний и предпоследний год
-                                sorted_years = sorted(years, reverse=True)
-                                
-                                # Ищем показатели выручки
-                                indicators = fin_results.get("indicators", [])
-                                for indicator in indicators:
-                                    if "Выручка" in indicator.get("name", ""):
-                                        sum_data = indicator.get("sum", {})
-                                        if sum_data and sorted_years:
-                                            revenue_val = sum_data.get(str(sorted_years[0]), "")
-                                            if revenue_val:
-                                                # Конвертируем в тысячи рублей
-                                                revenue = str(int(revenue_val / 1000)) if isinstance(revenue_val, (int, float)) else str(revenue_val)
-                                            
-                                            if len(sorted_years) > 1:
-                                                revenue_prev_val = sum_data.get(str(sorted_years[1]), "")
-                                                if revenue_prev_val:
-                                                    revenue_previous = str(int(revenue_prev_val / 1000)) if isinstance(revenue_prev_val, (int, float)) else str(revenue_prev_val)
-                                            break
+                            # Ищем показатель "Выручка" (код строки 2110)
+                            indicators = fin_results.get("indicators", [])
+                            for indicator in indicators:
+                                indicator_name = indicator.get("name", "")
+                                # Ищем конкретно "Выручка" (строка 2110)
+                                if indicator_name == "Выручка" or "выручка" in indicator_name.lower():
+                                    sum_data = indicator.get("sum", {})
+                                    if sum_data:
+                                        # Берем конкретно 2024 и 2023
+                                        revenue_2024 = sum_data.get("2024", "")
+                                        revenue_2023 = sum_data.get("2023", "")
+                                        
+                                        if revenue_2024:
+                                            # Конвертируем в тысячи рублей
+                                            revenue = str(int(revenue_2024 / 1000)) if isinstance(revenue_2024, (int, float)) else str(revenue_2024)
+                                        
+                                        if revenue_2023:
+                                            revenue_previous = str(int(revenue_2023 / 1000)) if isinstance(revenue_2023, (int, float)) else str(revenue_2023)
+                                        
+                                        logger.info(f"Revenue 2024: {revenue}, Revenue 2023: {revenue_previous}")
+                                        break
                         
                         return {
                             "revenue": revenue,
