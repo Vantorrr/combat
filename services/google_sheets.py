@@ -366,6 +366,9 @@ class GoogleSheetsService:
                 logger.warning("Supervisor sheet ID not configured")
                 return
             
+            # Гарантируем актуальные заголовки (в т.ч. колонка "Почта")
+            await self._ensure_headers(settings.supervisor_sheet_id)
+
             # Получаем текущие данные
             result = self.service.spreadsheets().values().get(
                 spreadsheetId=settings.supervisor_sheet_id,
