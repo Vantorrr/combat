@@ -154,8 +154,19 @@ async def process_phone(message: Message, state: FSMContext):
     phone = message.text.strip()
     
     await state.update_data(phone=phone)
+
+    # Если email отсутствует в данных DataNewton — спросим у пользователя
+    data = await state.get_data()
+    api_email = (data.get('company_data') or {}).get('email', '')
+    if not api_email:
+        await state.set_state(NewCallStates.waiting_for_email)
+        await message.answer(
+            "📧 Введите email (или пропустите)",
+            reply_markup=get_skip_keyboard()
+        )
+        return
+
     await state.set_state(NewCallStates.waiting_for_comment)
-    
     await message.answer(
         "💬 Введите комментарий к звонку:\n"
         "(что обсуждали, договоренности, результат)",
@@ -167,8 +178,40 @@ async def process_phone(message: Message, state: FSMContext):
 async def skip_phone(callback: CallbackQuery, state: FSMContext):
     """Пропустить ввод телефона"""
     await state.update_data(phone="")
+    data = await state.get_data()
+    api_email = (data.get('company_data') or {}).get('email', '')
+    if not api_email:
+        await state.set_state(NewCallStates.waiting_for_email)
+        await callback.message.edit_text(
+            "📧 Введите email (или пропустите)",
+            reply_markup=get_skip_keyboard()
+        )
+        await callback.answer()
+        return
+
     await state.set_state(NewCallStates.waiting_for_comment)
-    
+    await callback.message.edit_text(
+        "💬 Введите комментарий к звонку:\n"
+        "(что обсуждали, договоренности, результат)",
+        reply_markup=get_cancel_keyboard()
+    )
+    await callback.answer()
+
+@router.message(NewCallStates.waiting_for_email)
+async def process_email(message: Message, state: FSMContext):
+    email = message.text.strip()
+    await state.update_data(email=email)
+    await state.set_state(NewCallStates.waiting_for_comment)
+    await message.answer(
+        "💬 Введите комментарий к звонку:\n"
+        "(что обсуждали, договоренности, результат)",
+        reply_markup=get_cancel_keyboard()
+    )
+
+@router.callback_query(NewCallStates.waiting_for_email, F.data == "skip")
+async def skip_email(callback: CallbackQuery, state: FSMContext):
+    await state.update_data(email="")
+    await state.set_state(NewCallStates.waiting_for_comment)
     await callback.message.edit_text(
         "💬 Введите комментарий к звонку:\n"
         "(что обсуждали, договоренности, результат)",
@@ -261,7 +304,7 @@ async def save_new_call(message: Message, state: FSMContext, session: AsyncSessi
         'address': data.get('company_data', {}).get('address', ''),
         'director': data.get('company_data', {}).get('director', ''),
         'status': data.get('company_data', {}).get('status', ''),
-        'email': data.get('company_data', {}).get('email', ''),
+        'email': (data.get('email') or data.get('company_data', {}).get('email', '')),
         'region': data.get('company_data', {}).get('region', ''),
         'gov_contracts': data.get('company_data', {}).get('gov_contracts', ''),
         'arbitration': data.get('company_data', {}).get('arbitration', ''),
