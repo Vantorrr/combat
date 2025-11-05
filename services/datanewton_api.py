@@ -231,6 +231,68 @@ class DataNewtonAPI:
         except Exception as e:
             logger.error(f"Error fetching government contracts: {e}")
             return ""
+
+    async def get_government_contracts_stat(self, inn: Optional[str] = None, ogrn: Optional[str] = None) -> Dict[str, Any]:
+        """Новый способ: статистика по госконтрактам + топ ОКПД2.
+        Возвращает dict: { total_sum, top_okpd2_code, top_okpd2_name }
+        """
+        try:
+            async with aiohttp.ClientSession() as session:
+                url = f"{self.base_url}/governmentContractsStat"
+                params = {"key": self.api_key}
+                if ogrn:
+                    params["ogrn"] = ogrn
+                elif inn:
+                    params["inn"] = inn
+                
+                logger.info(f"GovContractsStat request: GET {url} with params: {params}")
+                async with session.get(url, headers=self.headers, params=params) as response:
+                    raw_text = await response.text()
+                    if response.status != 200:
+                        logger.warning(f"governmentContractsStat HTTP {response.status}: {raw_text}")
+                        return {"total_sum": "", "top_okpd2_code": "", "top_okpd2_name": ""}
+                    data = await response.json()
+
+                    total_sum = 0
+                    suppliers_stat = data.get("suppliers_stat", {}).get("stat", [])
+                    if suppliers_stat:
+                        total_sum += sum(item.get("sum", 0) for item in suppliers_stat)
+                    customers_stat = data.get("customers_stat", {}).get("stat", [])
+                    if customers_stat:
+                        total_sum += sum(item.get("sum", 0) for item in customers_stat)
+                    if not total_sum:
+                        generic = data.get("stat", []) or data.get("data", []) or []
+                        if isinstance(generic, list):
+                            total_sum = sum(item.get("sum", 0) for item in generic if isinstance(item, dict))
+
+                    # Находим топ ОКПД2 по сумме
+                    candidates = []
+                    if suppliers_stat:
+                        candidates.extend(suppliers_stat)
+                    if customers_stat:
+                        candidates.extend(customers_stat)
+                    if not candidates:
+                        candidates = data.get("stat", []) or data.get("data", []) or []
+
+                    best = None
+                    for it in candidates:
+                        if not isinstance(it, dict):
+                            continue
+                        code = it.get("okpd2_code") or it.get("okpd2")
+                        if not code:
+                            continue
+                        s = it.get("sum", 0) or 0
+                        if best is None or s > best.get("sum", 0):
+                            best = {"code": code, "name": it.get("okpd2_name") or it.get("okpd2_title") or "", "sum": s}
+
+                    return {
+                        "total_sum": str(int(total_sum)) if total_sum else "",
+                        "top_okpd2_code": (best or {}).get("code", ""),
+                        "top_okpd2_name": (best or {}).get("name", ""),
+                    }
+        except Exception as e:
+            logger.error(f"Error fetching governmentContractsStat: {e}")
+            return {"total_sum": "", "top_okpd2_code": "", "top_okpd2_name": ""}
     
     async def get_arbitration_data(self, inn: str) -> str:
         """Получить данные по арбитражным делам (открытые дела)"""
@@ -290,11 +352,15 @@ class DataNewtonAPI:
         
         try:
             ogrn = company_data.get("ogrn", "")
-            gov_contracts = await self.get_government_contracts(ogrn)
-            company_data["gov_contracts"] = gov_contracts
+            stat = await self.get_government_contracts_stat(inn=inn, ogrn=ogrn)
+            company_data["gov_contracts"] = stat.get("total_sum", "")
+            company_data["okpd"] = stat.get("top_okpd2_code", "")
+            company_data["okpd_name"] = stat.get("top_okpd2_name", "")
         except Exception as e:
             logger.debug(f"Government contracts not available: {e}")
             company_data["gov_contracts"] = ""
+            company_data["okpd"] = ""
+            company_data["okpd_name"] = ""
         
         try:
             arbitration = await self.get_arbitration_data(inn)
