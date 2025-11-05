@@ -154,11 +154,12 @@ async def process_phone(message: Message, state: FSMContext):
     phone = message.text.strip()
     
     await state.update_data(phone=phone)
-    await state.set_state(NewCallStates.waiting_for_email)
+    await state.set_state(NewCallStates.waiting_for_comment)
     
     await message.answer(
-        "📧 Введите email (или пропустите)",
-        reply_markup=get_skip_keyboard()
+        "💬 Введите комментарий к звонку:\n"
+        "(что обсуждали, договоренности, результат)",
+        reply_markup=get_cancel_keyboard()
     )
 
 
@@ -166,36 +167,14 @@ async def process_phone(message: Message, state: FSMContext):
 async def skip_phone(callback: CallbackQuery, state: FSMContext):
     """Пропустить ввод телефона"""
     await state.update_data(phone="")
-    await state.set_state(NewCallStates.waiting_for_email)
+    await state.set_state(NewCallStates.waiting_for_comment)
     
-    await callback.message.edit_text(
-        "📧 Введите email (или пропустите)",
-        reply_markup=get_skip_keyboard()
-    )
-@router.message(NewCallStates.waiting_for_email)
-async def process_email(message: Message, state: FSMContext):
-    email = message.text.strip()
-    await state.update_data(email=email)
-    await state.set_state(NewCallStates.waiting_for_comment)
-    await message.answer(
-        "💬 Введите комментарий к звонку:\n"
-        "(что обсуждали, договоренности, результат)",
-        reply_markup=get_cancel_keyboard()
-    )
-
-
-@router.callback_query(NewCallStates.waiting_for_email, F.data == "skip")
-async def skip_email(callback: CallbackQuery, state: FSMContext):
-    await state.update_data(email="")
-    await state.set_state(NewCallStates.waiting_for_comment)
     await callback.message.edit_text(
         "💬 Введите комментарий к звонку:\n"
         "(что обсуждали, договоренности, результат)",
         reply_markup=get_cancel_keyboard()
     )
     await callback.answer()
-
-
 @router.message(NewCallStates.waiting_for_comment)
 async def process_comment(message: Message, state: FSMContext):
     """Обработка комментария"""
