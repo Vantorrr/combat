@@ -249,18 +249,25 @@ async def save_new_call(message: Message, state: FSMContext, session: AsyncSessi
         'next_call_date': data.get('next_call_date', ''),
         'comment': data['comment'],
         'revenue': data.get('company_data', {}).get('revenue', ''),
+        'revenue_previous': data.get('company_data', {}).get('revenue_previous', ''),
         'capital': data.get('company_data', {}).get('capital', ''),
+        'assets': data.get('company_data', {}).get('assets', ''),
+        'debit': data.get('company_data', {}).get('debit', ''),
+        'credit': data.get('company_data', {}).get('credit', ''),
         'okved': data.get('company_data', {}).get('okved', ''),
-        'okved_main': data.get('company_data', {}).get('okved_name', ''),
+        'okved_main': data.get('company_data', {}).get('okved', ''),
+        'okved_name': data.get('company_data', {}).get('okved_name', ''),
         'employees': data.get('company_data', {}).get('employees', ''),
         'address': data.get('company_data', {}).get('address', ''),
         'director': data.get('company_data', {}).get('director', ''),
         'status': data.get('company_data', {}).get('status', ''),
-        'email': data.get('email', ''),
+        'email': data.get('company_data', {}).get('email', ''),
         'region': data.get('company_data', {}).get('region', ''),
         'gov_contracts': data.get('company_data', {}).get('gov_contracts', ''),
         'arbitration': data.get('company_data', {}).get('arbitration', ''),
-        'bankruptcy': data.get('company_data', {}).get('bankruptcy', '')
+        'bankruptcy': data.get('company_data', {}).get('bankruptcy', ''),
+        'okpd': '',
+        'okpd_name': ''
     }
     
     # Сохраняем в Google Sheets
