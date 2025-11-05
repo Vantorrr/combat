@@ -1,0 +1,16 @@
+# Пример настройки cron для автоматического обновления данных раз в неделю
+# 
+# Добавить в crontab: crontab -e
+# 
+# Обновление каждый понедельник в 9:00
+0 9 * * 1 cd /Users/pavelgalante/CRMbot && /Users/pavelgalante/CRMbot/venv/bin/python scripts/auto_update_data.py --sheet-id YOUR_SHEET_ID --columns Q R
+# 
+# Обновление раз в две недели
+# 0 9 * * 1 cd /Users/pavelgalante/CRMbot && [ $(($(date +\%W) \% 2)) -eq 0 ] && /Users/pavelgalante/CRMbot/venv/bin/python scripts/auto_update_data.py --sheet-id YOUR_SHEET_ID --columns Q R
+# 
+# Обновление только арбитражных дел (экономия токенов):
+# 0 9 * * 1 cd /Users/pavelgalante/CRMbot && /Users/pavelgalante/CRMbot/venv/bin/python scripts/auto_update_data.py --sheet-id YOUR_SHEET_ID --columns Q
+
+
+
+

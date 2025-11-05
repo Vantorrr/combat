@@ -1,0 +1,222 @@
+from aiogram import Router, F
+from aiogram.types import Message, CallbackQuery
+from aiogram.fsm.context import FSMContext
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from datetime import datetime
+from loguru import logger
+
+from bot.keyboards.main import (
+    get_cancel_keyboard, 
+    get_skip_keyboard,
+    get_main_menu
+)
+from bot.states.call_states import RepeatCallStates
+from models.database import Manager, CallSession
+from services.google_sheets import get_google_sheets_service
+
+router = Router()
+
+
+@router.callback_query(F.data == "repeat_call")
+async def start_repeat_call(callback: CallbackQuery, state: FSMContext, session: AsyncSession):
+    """Начать процесс повторного звонка"""
+    user_id = callback.from_user.id
+    
+    # Проверяем менеджера
+    result = await session.execute(
+        select(Manager).where(Manager.telegram_id == user_id)
+    )
+    manager = result.scalar_one_or_none()
+    
+    if not manager:
+        await callback.answer("❌ Вы не зарегистрированы в системе", show_alert=True)
+        return
+    
+    await state.update_data(
+        manager_id=manager.id,
+        manager_sheet_id=manager.google_sheet_id,
+        manager_name=manager.full_name
+    )
+    await state.set_state(RepeatCallStates.waiting_for_inn)
+    
+    await callback.message.edit_text(
+        "🔄 *Повторный звонок*\n\n"
+        "Введите ИНН компании, которой звоните повторно:",
+        parse_mode="Markdown",
+        reply_markup=get_cancel_keyboard()
+    )
+    await callback.answer()
+
+
+@router.message(RepeatCallStates.waiting_for_inn)
+async def process_repeat_inn(message: Message, state: FSMContext, session: AsyncSession):
+    """Обработка ИНН для повторного звонка"""
+    inn = message.text.strip()
+    
+    # Базовая валидация ИНН
+    if not inn.isdigit() or len(inn) not in [10, 12]:
+        await message.answer(
+            "❌ Неверный формат ИНН.\n"
+            "ИНН должен содержать 10 или 12 цифр.\n\n"
+            "Попробуйте еще раз:",
+            reply_markup=get_cancel_keyboard()
+        )
+        return
+    
+    # Проверяем, есть ли компания в базе менеджера
+    data = await state.get_data()
+    manager_id = data['manager_id']
+    
+    result = await session.execute(
+        select(CallSession).where(
+            CallSession.manager_id == manager_id,
+            CallSession.company_inn == inn
+        ).order_by(CallSession.created_at.desc())
+    )
+    existing_call = result.scalar_one_or_none()
+    
+    if existing_call:
+        await state.update_data(
+            inn=inn, 
+            company_name=existing_call.company_name,
+            existing_call_id=existing_call.id
+        )
+        await state.set_state(RepeatCallStates.waiting_for_comment)
+        
+        await message.answer(
+            f"✅ Найдена компания:\n\n"
+            f"*{existing_call.company_name}*\n"
+            f"ИНН: {inn}\n"
+            f"Последний контакт: {existing_call.contact_name}\n"
+            f"Последний комментарий: {existing_call.comment[:100]}...\n\n"
+            f"💬 Введите комментарий по результатам повторного звонка:",
+            parse_mode="Markdown",
+            reply_markup=get_cancel_keyboard()
+        )
+    else:
+        await message.answer(
+            "❌ Компания с таким ИНН не найдена в вашей базе.\n"
+            "Возможно, вы хотите создать новый звонок?\n\n"
+            "Попробуйте ввести ИНН еще раз или отмените действие.",
+            reply_markup=get_cancel_keyboard()
+        )
+
+
+@router.message(RepeatCallStates.waiting_for_comment)
+async def process_repeat_comment(message: Message, state: FSMContext):
+    """Обработка комментария повторного звонка"""
+    raw_comment = message.text.strip()
+    # Добавляем дату к комментарию
+    today = datetime.now().strftime("%d.%m.%y")
+    comment = f"{today} - {raw_comment}"
+    
+    await state.update_data(comment=comment)
+    await state.set_state(RepeatCallStates.waiting_for_next_call_date)
+    
+    await message.answer(
+        "📅 Введите дату следующего звонка в формате ДД.ММ.ГГ:\n"
+        "(например: 25.12.24)",
+        reply_markup=get_skip_keyboard()
+    )
+
+
+@router.message(RepeatCallStates.waiting_for_next_call_date)
+async def process_repeat_next_call_date(message: Message, state: FSMContext, session: AsyncSession):
+    """Обработка даты следующего звонка для повторного звонка"""
+    date_text = message.text.strip()
+    
+    # Проверка формата даты
+    try:
+        next_call_date = datetime.strptime(date_text, "%d.%m.%y")
+        await state.update_data(next_call_date=date_text)
+    except ValueError:
+        await message.answer(
+            "❌ Неверный формат даты.\n"
+            "Используйте формат ДД.ММ.ГГ (например: 25.12.24)",
+            reply_markup=get_skip_keyboard()
+        )
+        return
+    
+    await save_repeat_call(message, state, session)
+
+
+@router.callback_query(RepeatCallStates.waiting_for_next_call_date, F.data == "skip")
+async def skip_repeat_next_call_date(callback: CallbackQuery, state: FSMContext, session: AsyncSession):
+    """Пропустить дату следующего звонка для повторного звонка"""
+    await state.update_data(next_call_date="")
+    await save_repeat_call(callback.message, state, session)
+    await callback.answer()
+
+
+async def save_repeat_call(message: Message, state: FSMContext, session: AsyncSession):
+    """Сохранить данные повторного звонка"""
+    data = await state.get_data()
+    
+    # Сохраняем в базу данных
+    call_session = CallSession(
+        manager_id=data['manager_id'],
+        session_type='repeat',
+        company_inn=data['inn'],
+        company_name=data['company_name'],
+        contact_name='',  # Используем из предыдущего звонка
+        contact_phone='',  # Используем из предыдущего звонка
+        comment=data['comment'],
+        next_call_date=datetime.strptime(data['next_call_date'], "%d.%m.%y") if data.get('next_call_date') else None
+    )
+    
+    session.add(call_session)
+    await session.commit()
+    
+    # Обновляем данные в Google Sheets
+    update_data = {
+        'comment': data['comment'],
+        'next_call_date': data.get('next_call_date', '')
+    }
+    
+    try:
+        google_sheets_service = get_google_sheets_service()
+        success = await google_sheets_service.update_repeat_call(
+            data['manager_sheet_id'],
+            data['inn'],
+            update_data
+        )
+        
+        if success:
+            # Обновляем сводную таблицу руководителя
+            supervisor_data = {
+                'company_name': data['company_name'],
+                'inn': data['inn'],
+                'contact_name': '',  # Берется из существующих данных
+                'phone': '',  # Берется из существующих данных
+                'comment': update_data['comment'],
+                'next_call_date': update_data['next_call_date']
+            }
+            await google_sheets_service.update_supervisor_sheet(
+                data['manager_name'],
+                supervisor_data
+            )
+            
+            await message.answer(
+                "✅ Данные повторного звонка сохранены!\n\n"
+                f"Компания: *{data['company_name']}*\n"
+                f"След. звонок: {data.get('next_call_date', 'Не указан')}\n\n"
+                "Что дальше?",
+                parse_mode="Markdown",
+                reply_markup=get_main_menu()
+            )
+        else:
+            await message.answer(
+                "⚠️ Данные сохранены локально, но возникла ошибка при обновлении Google Sheets.\n"
+                "Обратитесь к администратору.",
+                reply_markup=get_main_menu()
+            )
+    except Exception as e:
+        logger.error(f"Error updating Google Sheets: {e}")
+        await message.answer(
+            "⚠️ Произошла ошибка при обновлении таблицы.\n"
+            "Данные сохранены локально.",
+            reply_markup=get_main_menu()
+        )
+    
+    await state.clear()
