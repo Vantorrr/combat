@@ -6,8 +6,10 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
-from models.database import init_db, get_session
+from models.database import init_db, get_session, Manager
 from bot.handlers import start, new_call, repeat_call, admin, utils, sheet_info, csv_import
+from services.google_sheets import get_google_sheets_service
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 # Настройка логирования
 logger.remove()
@@ -32,6 +34,47 @@ async def on_startup(bot: Bot):
             )
         except Exception as e:
             logger.debug(f"Admin {admin_id} not notified (probably hasn't started bot yet)")
+
+    # Планировщик напоминаний
+    try:
+        scheduler = AsyncIOScheduler(timezone=settings.timezone)
+
+        async def send_daily_reminders():
+            try:
+                google_sheets = get_google_sheets_service()
+                # Получаем список менеджеров и шлём напоминания
+                async for session in get_session():
+                    result = await session.execute(Manager.__table__.select())
+                    rows = result.fetchall()
+                    for row in rows:
+                        sheet_id = row.google_sheet_id if hasattr(row, 'google_sheet_id') else None
+                        chat_id = row.telegram_id if hasattr(row, 'telegram_id') else None
+                        if not sheet_id or not chat_id:
+                            continue
+                        today_calls = await google_sheets.get_today_calls(sheet_id)
+                        if today_calls:
+                            try:
+                                await bot.send_message(
+                                    chat_id,
+                                    f"📅 Напоминание: на сегодня запланировано звонков: {len(today_calls)}"
+                                )
+                            except Exception:
+                                pass
+                    await session.close()
+            except Exception as e:
+                logger.warning(f"Reminder job failed: {e}")
+
+        # Несколько времен напоминаний в день
+        for tm in settings.reminder_times_list:
+            try:
+                h, m = map(int, tm.split(":"))
+                scheduler.add_job(send_daily_reminders, 'cron', hour=h, minute=m)
+            except Exception:
+                logger.warning(f"Invalid reminder time skipped: {tm}")
+        scheduler.start()
+        logger.info("Scheduler started for daily reminders")
+    except Exception as e:
+        logger.warning(f"Scheduler not started: {e}")
 
 
 async def on_shutdown(bot: Bot):

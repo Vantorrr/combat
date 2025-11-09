@@ -310,10 +310,8 @@ async def save_new_call(message: Message, state: FSMContext, session: AsyncSessi
         'arbitration_open_count': data.get('company_data', {}).get('arbitration_open_count', ''),
         'arbitration_open_sum': data.get('company_data', {}).get('arbitration_open_sum', ''),
         'arbitration_last_doc_date': data.get('company_data', {}).get('arbitration_last_doc_date', ''),
-        'arbitration': data.get('company_data', {}).get('arbitration', ''),
-        'bankruptcy': data.get('company_data', {}).get('bankruptcy', ''),
-        'okpd': '',
-        'okpd_name': ''
+        'okpd': data.get('company_data', {}).get('okpd', ''),
+        'okpd_name': data.get('company_data', {}).get('okpd_name', '')
     }
     
     # Сохраняем в Google Sheets

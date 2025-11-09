@@ -122,7 +122,9 @@ class DataNewtonAPI:
             return {}
     
     async def get_finance_data(self, inn: str) -> Dict[str, Any]:
-        """Получить финансовые данные"""
+        """Получить финансовые данные: выручка (2110), основные средства (1150), дебиторка (1230), кредиторка (1520).
+        Значения конвертируем в тысячи рублей. Берём 2024, fallback 2023.
+        """
         try:
             async with aiohttp.ClientSession() as session:
                 url = f"{self.base_url}/finance"
@@ -141,11 +143,14 @@ class DataNewtonAPI:
                         # Если только available_count - значит данных нет в ответе
                         if "available_count" in data and len(data) == 1:
                             logger.warning(f"Finance API returns only available_count - data not available on current tariff")
-                            return {"revenue": "", "revenue_previous": ""}
+                            return {"revenue": "", "revenue_previous": "", "assets": "", "debit": "", "credit": ""}
                         
                         # Извлекаем выручку из отчетности
                         revenue = ""
                         revenue_previous = ""
+                        assets = ""
+                        debit = ""
+                        credit = ""
                         
                         # Получаем финансовые результаты (строка 2110 - выручка)
                         fin_results = data.get("fin_results", {})
@@ -171,17 +176,45 @@ class DataNewtonAPI:
                                         
                                         logger.info(f"Revenue 2024: {revenue}, Revenue 2023: {revenue_previous}")
                                         break
+
+                        # Баланс: основные средства (1150), дебиторка (1230), кредиторка (1520)
+                        balances = data.get("balances", {})
+                        if balances:
+                            indicators = balances.get("indicators", [])
+                            # Хелпер извлечения по имени/коду
+                            def extract_sum(ind_list, names_or_codes):
+                                for ind in ind_list:
+                                    name = ind.get("name", "")
+                                    code = str(ind.get("code", ""))
+                                    if any(k.lower() in name.lower() for k in names_or_codes if not k.isdigit()) or code in names_or_codes:
+                                        sums = ind.get("sum", {})
+                                        val = sums.get("2024") or sums.get("2023")
+                                        if isinstance(val, (int, float)):
+                                            return str(int(val / 1000))
+                                        return str(val) if val is not None else ""
+                                return ""
+
+                            # 1150 Основные средства
+                            assets = extract_sum(indicators, ["1150", "Основные средства"])
+                            # 1230 Дебиторская задолженность
+                            debit = extract_sum(indicators, ["1230", "Дебиторская задолженность"])
+                            # 1520 Кредиторская задолженность
+                            credit = extract_sum(indicators, ["1520", "Кредиторская задолженность"])
+                            logger.info(f"Balances parsed: assets={assets}, debit={debit}, credit={credit}")
                         
                         return {
                             "revenue": revenue,
-                            "revenue_previous": revenue_previous
+                            "revenue_previous": revenue_previous,
+                            "assets": assets,
+                            "debit": debit,
+                            "credit": credit
                         }
                     else:
                         logger.warning(f"Finance API returned status {response.status}")
-                    return {"revenue": "", "revenue_previous": ""}
+                    return {"revenue": "", "revenue_previous": "", "assets": "", "debit": "", "credit": ""}
         except Exception as e:
             logger.error(f"Error fetching finance data: {e}")
-            return {"revenue": "", "revenue_previous": ""}
+            return {"revenue": "", "revenue_previous": "", "assets": "", "debit": "", "credit": ""}
     
     async def get_government_contracts(self, ogrn: str) -> str:
         """Получить данные по госконтрактам (требует ОГРН)"""
@@ -239,7 +272,7 @@ class DataNewtonAPI:
         try:
             async with aiohttp.ClientSession() as session:
                 url = f"{self.base_url}/governmentContractsStat"
-                params = {"key": self.api_key}
+                params = {"key": self.api_key, "type": "ALL"}
                 if ogrn:
                     params["ogrn"] = ogrn
                 elif inn:
@@ -294,6 +327,35 @@ class DataNewtonAPI:
             logger.error(f"Error fetching governmentContractsStat: {e}")
             return {"total_sum": "", "top_okpd2_code": "", "top_okpd2_name": ""}
     
+    async def get_okpd_list(self, inn: Optional[str] = None, ogrn: Optional[str] = None) -> Dict[str, str]:
+        """Получить список ОКПД/ОКПД2 компании. Возвращает {code, name} (берём первый в списке).
+        Документация: /v1/okpdList (inn или ogrн, любой из них).
+        """
+        try:
+            async with aiohttp.ClientSession() as session:
+                url = f"{self.base_url}/okpdList"
+                params: Dict[str, Any] = {"key": self.api_key}
+                if inn:
+                    params["inn"] = inn
+                if ogrn and "inn" not in params:
+                    params["ogrn"] = ogrn
+                async with session.get(url, headers=self.headers, params=params) as resp:
+                    raw_text = await resp.text()
+                    if resp.status != 200:
+                        logger.warning(f"okpdList HTTP {resp.status}: {raw_text}")
+                        return {"code": "", "name": ""}
+                    data = await resp.json()
+                    items = data.get("data", []) if isinstance(data, dict) else []
+                    if not items:
+                        return {"code": "", "name": ""}
+                    first = items[0] or {}
+                    code = first.get("okpd2_code") or first.get("okpd_code") or ""
+                    name = first.get("okpd2_name") or first.get("okpd_name") or ""
+                    return {"code": code, "name": name}
+        except Exception as e:
+            logger.error(f"Error fetching okpdList: {e}")
+            return {"code": "", "name": ""}
+
     async def get_arbitration_data(self, inn: str) -> str:
         """Получить данные по арбитражным делам (открытые дела)"""
         try:
@@ -335,7 +397,7 @@ class DataNewtonAPI:
             async with aiohttp.ClientSession() as session:
                 # Открытые дела
                 url = f"{self.base_url}/arbitration-cases"
-                params_open = {"key": self.api_key, "inn": inn, "status": "OPEN", "limit": 1000}
+                params_open = {"key": self.api_key, "inn": inn, "status": "OPEN", "limit": 1000, "company_role": "RESPONDENT"}
                 async with session.get(url, headers=self.headers, params=params_open) as resp_open:
                     data_open = await resp_open.json() if resp_open.status == 200 else {}
                 open_list = data_open.get("data", []) if isinstance(data_open, dict) else []
@@ -385,13 +447,19 @@ class DataNewtonAPI:
             finance_data = await self.get_finance_data(inn)
             company_data.update({
                 "revenue": finance_data.get("revenue", ""),
-                "revenue_previous": finance_data.get("revenue_previous", "")
+                "revenue_previous": finance_data.get("revenue_previous", ""),
+                "assets": finance_data.get("assets", ""),
+                "debit": finance_data.get("debit", ""),
+                "credit": finance_data.get("credit", ""),
             })
         except Exception as e:
             logger.debug(f"Finance data not available: {e}")
             company_data.update({
                 "revenue": "",
-                "revenue_previous": ""
+                "revenue_previous": "",
+                "assets": "",
+                "debit": "",
+                "credit": "",
             })
         
         try:
@@ -405,6 +473,15 @@ class DataNewtonAPI:
             company_data["gov_contracts"] = ""
             company_data["okpd"] = ""
             company_data["okpd_name"] = ""
+
+        # Если ОКПД не удалось получить из статистики контрактов — пробуем okpdList
+        if not company_data.get("okpd"):
+            try:
+                okpd = await self.get_okpd_list(inn=inn, ogrn=company_data.get("ogrn"))
+                company_data["okpd"] = okpd.get("code", "")
+                company_data["okpd_name"] = okpd.get("name", "")
+            except Exception as e:
+                logger.debug(f"okpdList not available: {e}")
         
         try:
             arb_stats = await self.get_arbitration_stats(inn)

@@ -23,7 +23,9 @@ class Settings(BaseSettings):
     admin_ids: Union[str, List[int]] = []
     
     # Scheduler
-    reminder_time: str = "09:00"
+    reminder_time: str = "09:00"  # fallback
+    reminder_times: str = "10:00,15:00,17:00"  # comma separated HH:MM
+    timezone: str = "Europe/Moscow"
     
     class Config:
         env_file = ".env"
@@ -33,6 +35,13 @@ class Settings(BaseSettings):
         if isinstance(self.admin_ids, str):
             return [int(id.strip()) for id in self.admin_ids.split(",") if id.strip()]
         return self.admin_ids
+
+    @property
+    def reminder_times_list(self) -> List[str]:
+        raw = (self.reminder_times or "").strip()
+        if not raw:
+            return [self.reminder_time]
+        return [t.strip() for t in raw.split(",") if t.strip()]
 
 
 settings = Settings()

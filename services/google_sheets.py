@@ -1,4 +1,5 @@
 import os
+import json
 from typing import List, Dict, Any, Optional
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
@@ -13,6 +14,17 @@ class GoogleSheetsService:
         self.credentials = None
         self.service = None
         self._initialize_service()
+        
+    def _now_str(self) -> str:
+        """Возвращает текущую дату с учётом часового пояса из настроек."""
+        try:
+            from zoneinfo import ZoneInfo
+            tz = ZoneInfo(getattr(settings, 'timezone', 'Europe/Moscow'))
+        except Exception:
+            tz = None
+        if tz is not None:
+            return datetime.now(tz).strftime('%d.%m.%y')
+        return datetime.now().strftime('%d.%m.%y')
     
     def _initialize_service(self):
         """Инициализация сервиса Google Sheets.
@@ -32,15 +44,31 @@ class GoogleSheetsService:
                 logger.warning(f"OAuth not configured, fallback to service account: {oauth_err}")
 
             # Fallback: service account
-            self.credentials = service_account.Credentials.from_service_account_file(
-                settings.google_sheets_credentials_file,
-                scopes=['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
-            )
+            # 1) Через переменную окружения GOOGLE_SERVICE_ACCOUNT_JSON (рекомендуется для Railway)
+            sa_json_env = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
+            scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+            if sa_json_env:
+                info = json.loads(sa_json_env)
+                self.credentials = service_account.Credentials.from_service_account_info(info, scopes=scopes)
+            else:
+                # 2) Через файл по пути из настроек
+                self.credentials = service_account.Credentials.from_service_account_file(
+                    settings.google_sheets_credentials_file,
+                    scopes=scopes
+                )
             self.service = build('sheets', 'v4', credentials=self.credentials)
             logger.info("Google Sheets via Service Account")
         except Exception as e:
             logger.error(f"Failed to initialize Google Sheets service: {e}")
             raise
+
+    def _get_first_sheet_gid(self, spreadsheet_id: str) -> int:
+        """Получить gid первого листа (вместо предположения sheetId=0)."""
+        meta = self.service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
+        sheets = meta.get('sheets', [])
+        if not sheets:
+            raise RuntimeError("Spreadsheet has no sheets")
+        return sheets[0]['properties']['sheetId']
     
     async def create_manager_sheet(self, manager_name: str) -> Optional[str]:
         """Создать новую таблицу для менеджера"""
@@ -102,7 +130,7 @@ class GoogleSheetsService:
              "Арбитражи (активные, кол-во)",
              "Арбитражи (активные, сумма)",
              "Арбитражи (последний документ, дата)", 
-             "Банкротство (да/нет)", "Телефон", "Почта", 
+             "Телефон", 
              "ОКПД (основной)", "Наименование ОКПД", "ОКВЭД, название",
              "Дата первого звонка"
             ]
@@ -120,12 +148,12 @@ class GoogleSheetsService:
             body=request
         ).execute()
         
-        # Форматируем заголовки и скрываем колонки
+        # Формат заголовков
         format_request = {
             'requests': [{
                 'repeatCell': {
                     'range': {
-                        'sheetId': 0,
+                        'sheetId': self._get_first_sheet_gid(sheet_id),
                         'startRowIndex': 0,
                         'endRowIndex': 1
                     },
@@ -142,17 +170,14 @@ class GoogleSheetsService:
             }]
         }
         
-        # Добавляем запросы на скрытие колонок
-        # Колонки для скрытия по умолчанию:
-        #  - F–K (индексы 6–11): финансы
-        #  - L–P (индексы 12–16): регион/ОКВЭД/контракты/арбитраж
+        # Скрываем финансовые/служебные колонки по умолчанию (не меняем индексы)
         hidden_columns = list(range(6, 12)) + list(range(12, 17))
-        
+        first_gid = self._get_first_sheet_gid(sheet_id)
         for col_index in hidden_columns:
             format_request['requests'].append({
                 'updateDimensionProperties': {
                     'range': {
-                        'sheetId': 0,
+                        'sheetId': first_gid,
                         'dimension': 'COLUMNS',
                         'startIndex': col_index,
                         'endIndex': col_index + 1
@@ -169,10 +194,47 @@ class GoogleSheetsService:
             body=format_request
         ).execute()
 
-    async def _ensure_headers(self, sheet_id: str) -> None:
-        """Проверяет заголовки листа менеджера и при несовпадении приводит к актуальному виду.
-        Это предотвращает смещение значений по колонкам, если старый лист имеет иную структуру.
+    async def delete_columns_by_titles(self, sheet_id: str, titles: List[str]) -> None:
+        """Удалить колонки по заголовкам (точное совпадение названия).
+        Делает безопасно: сначала определяет индексы, затем удаляет по убыванию индексов.
         """
+        try:
+            result = self.service.spreadsheets().values().get(
+                spreadsheetId=sheet_id,
+                range='A1:AZ1'
+            ).execute()
+            headers_row = (result.get('values') or [[]])[0]
+            to_delete_indices = []
+            for idx, title in enumerate(headers_row):
+                if title in titles:
+                    to_delete_indices.append(idx)
+            if not to_delete_indices:
+                logger.info(f"No columns to delete in {sheet_id} for titles {titles}")
+                return
+            to_delete_indices.sort(reverse=True)
+            gid = self._get_first_sheet_gid(sheet_id)
+            requests = []
+            for idx in to_delete_indices:
+                requests.append({
+                    'deleteDimension': {
+                        'range': {
+                            'sheetId': gid,
+                            'dimension': 'COLUMNS',
+                            'startIndex': idx,
+                            'endIndex': idx + 1
+                        }
+                    }
+                })
+            self.service.spreadsheets().batchUpdate(
+                spreadsheetId=sheet_id,
+                body={'requests': requests}
+            ).execute()
+            logger.info(f"Deleted columns {to_delete_indices} from {sheet_id}")
+        except Exception as e:
+            logger.error(f"Error deleting columns in {sheet_id}: {e}")
+
+    async def _ensure_headers(self, sheet_id: str) -> None:
+        """Проверяет заголовки листа менеджера и при несовпадении приводит к актуальному виду."""
         try:
             expected = [
                 "Наименование компании", "ИНН", "ФИО ЛПР", "Телефон",
@@ -186,8 +248,10 @@ class GoogleSheetsService:
                 "Кредиторская задолженность за прошлый год (тыс рублей)",
                 "Регион(+n часов к Москве)", "ОКВЭД", "ОКВЭД (основной)",
                 "Госконтракты, сумма заключенных за всё время",
-                "Арбитражные дела, сумма активных арбитраж",
-                "Банкротство (да/нет)", "Телефон", "Почта",
+                "Арбитражи (активные, кол-во)",
+                "Арбитражи (активные, сумма)",
+                "Арбитражи (последний документ, дата)",
+                "Телефон",
                 "ОКПД (основной)", "Наименование ОКПД", "ОКВЭД, название",
                 "Дата первого звонка"
             ]
@@ -207,56 +271,40 @@ class GoogleSheetsService:
     async def add_new_call(self, sheet_id: str, call_data: Dict[str, Any]) -> bool:
         """Добавить данные о новом звонке"""
         try:
-            # Гарантируем корректные заголовки перед записью
             await self._ensure_headers(sheet_id)
-            # Получаем текущие данные
             result = self.service.spreadsheets().values().get(
                 spreadsheetId=sheet_id,
                 range='A:AZ'
             ).execute()
-            
             values = result.get('values', [])
-            
-            # Определяем строку для вставки
-            if len(values) <= 1:  # Только заголовки или пустая таблица
-                row_num = 2
-            else:
-                row_num = len(values) + 1
-            
-            # Формируем данные для вставки
+            row_num = 2 if len(values) <= 1 else len(values) + 1
             new_row = [
-                call_data.get('company_name', ''),
-                call_data.get('inn', ''),
-                call_data.get('contact_name', ''),
-                call_data.get('phone', ''),
-                call_data.get('next_call_date', ''),
-                call_data.get('comment', ''),  # История звонков - первый комментарий
-                call_data.get('revenue', ''),
-                call_data.get('revenue_previous', ''),
-                call_data.get('capital', ''),
-                call_data.get('assets', ''),
-                call_data.get('debit', ''),
-                call_data.get('credit', ''),
-                call_data.get('region', ''),
-                call_data.get('okved', ''),
-                call_data.get('okved_main', ''),
-                call_data.get('gov_contracts', ''),
-                call_data.get('arbitration_open_count', ''),
-                call_data.get('arbitration_open_sum', ''),
-                call_data.get('arbitration_last_doc_date', ''),
-                call_data.get('bankruptcy', ''),
-                call_data.get('phone', ''),
-                call_data.get('email', ''),
-                call_data.get('okpd', ''),  # ОКПД (основной)
-                call_data.get('okpd_name', ''),  # Наименование ОКПД
-                call_data.get('okved_name', ''),  # ОКВЭД, название
-                datetime.now().strftime('%d.%m.%y')  # Дата первого звонка
+                call_data.get('company_name', ''),  # A
+                call_data.get('inn', ''),  # B
+                call_data.get('contact_name', ''),  # C
+                call_data.get('phone', ''),  # D
+                call_data.get('next_call_date', ''),  # E
+                call_data.get('comment', ''),  # F
+                call_data.get('revenue', ''),  # G
+                call_data.get('revenue_previous', ''),  # H
+                call_data.get('capital', ''),  # I
+                call_data.get('assets', ''),  # J
+                call_data.get('debit', ''),  # K
+                call_data.get('credit', ''),  # L
+                call_data.get('region', ''),  # M
+                call_data.get('okved', ''),  # N
+                call_data.get('okved_main', ''),  # O
+                call_data.get('gov_contracts', ''),  # P
+                call_data.get('arbitration_open_count', ''),  # Q
+                call_data.get('arbitration_open_sum', ''),  # R
+                call_data.get('arbitration_last_doc_date', ''),  # S
+                call_data.get('phone', ''),  # T (дубль)
+                call_data.get('okpd', ''),  # U
+                call_data.get('okpd_name', ''),  # V
+                call_data.get('okved_name', ''),  # W
+                self._now_str()  # X
             ]
-            
-            request = {
-                'values': [new_row]
-            }
-            
+            request = {'values': [new_row]}
             self.service.spreadsheets().values().append(
                 spreadsheetId=sheet_id,
                 range=f'A{row_num}:AZ{row_num}',
@@ -264,9 +312,7 @@ class GoogleSheetsService:
                 insertDataOption='INSERT_ROWS',
                 body=request
             ).execute()
-            
             return True
-            
         except Exception as e:
             logger.error(f"Error adding new call: {e}")
             return False
@@ -342,19 +388,19 @@ class GoogleSheetsService:
             ).execute()
             
             values = result.get('values', [])
-            today = datetime.now().strftime('%d.%m.%y')
+            today = self._now_str()
             today_calls = []
             
             for i, row in enumerate(values[1:], start=2):  # Пропускаем заголовок
-                if len(row) > 5 and row[5] == today:  # Дата следующего звонка
+                if len(row) > 4 and row[4] == today:  # E: Дата следующего звонка
                     today_calls.append({
                         'row_number': i,
                         'company_name': row[0] if len(row) > 0 else '',
                         'inn': row[1] if len(row) > 1 else '',
                         'contact_name': row[2] if len(row) > 2 else '',
                         'phone': row[3] if len(row) > 3 else '',
-                        'last_comment': row[6] if len(row) > 6 else '',
-                        'okved': row[16] if len(row) > 16 else ''
+                        'last_comment': row[5] if len(row) > 5 else '',
+                        'okved': row[13] if len(row) > 13 else ''
                     })
             
             return today_calls
@@ -369,120 +415,70 @@ class GoogleSheetsService:
             if not settings.supervisor_sheet_id:
                 logger.warning("Supervisor sheet ID not configured")
                 return
-            
-            # Гарантируем актуальные заголовки (в т.ч. колонка "Почта")
             await self._ensure_headers(settings.supervisor_sheet_id)
-
-            # Получаем текущие данные
             result = self.service.spreadsheets().values().get(
                 spreadsheetId=settings.supervisor_sheet_id,
                 range='A:AZ'
             ).execute()
-            
             values = result.get('values', [])
-            
-            # Определяем строку для записи
-            if len(values) < 2:
-                # Добавляем заголовки если их нет
-                await self._setup_sheet_headers(settings.supervisor_sheet_id)
-                next_row = 2
-            else:
-                next_row = len(values) + 1
-            
-            # Проверяем существует ли уже компания в таблице
+            next_row = 2 if len(values) < 2 else len(values) + 1
             company_row = None
             if len(values) > 1:
                 for i in range(1, len(values)):
                     if len(values[i]) > 1 and values[i][1] == call_data.get('inn'):
                         company_row = i + 1
                         break
-            
-            # Подготавливаем данные для записи
-            current_date = datetime.now().strftime('%d.%m.%y')
-            
+            current_date = self._now_str()
             if company_row:
-                # Обновляем существующую запись
                 updates = []
-                
-                # Обновляем дату последнего звонка
-                updates.append({
-                    'range': f'E{company_row}',
-                    'values': [[call_data.get('next_call_date', '')]]
-                })
-                
-                # Получаем текущую историю комментариев
-                existing_comments = ''
-                if len(values[company_row - 1]) > 5:
-                    existing_comments = values[company_row - 1][5]
-                
-                # Добавляем новый комментарий с именем менеджера
+                updates.append({'range': f'E{company_row}', 'values': [[call_data.get('next_call_date', '')]]})
+                existing_comments = values[company_row - 1][5] if len(values[company_row - 1]) > 5 else ''
                 new_comment = f"[{manager_name}] {call_data.get('comment', '')}"
-                if existing_comments:
-                    updated_comments = f"{new_comment}\n---\n{existing_comments}"
-                else:
-                    updated_comments = new_comment
-                
-                # Обновляем историю комментариев
-                updates.append({
-                    'range': f'F{company_row}',
-                    'values': [[updated_comments]]
-                })
-                
-                # Обновляем менеджера
-                updates.append({
-                    'range': f'Y{company_row}',
-                    'values': [[manager_name]]
-                })
-                
-                # Применяем обновления
+                updated_comments = f"{new_comment}\n---\n{existing_comments}" if existing_comments else new_comment
+                updates.append({'range': f'F{company_row}', 'values': [[updated_comments]]})
+                # Колонка менеджера убрана из структуры — не пишем в Y
                 self.service.spreadsheets().values().batchUpdate(
                     spreadsheetId=settings.supervisor_sheet_id,
                     body={'valueInputOption': 'RAW', 'data': updates}
                 ).execute()
-                
             else:
-                # Добавляем новую запись
                 row_data = [
                     call_data.get('company_name', ''),  # A
                     call_data.get('inn', ''),  # B
                     call_data.get('contact_name', ''),  # C
                     call_data.get('phone', ''),  # D
                     call_data.get('next_call_date', ''),  # E
-                    f"[{manager_name}] {call_data.get('comment', '')}",  # F - История звонков
-                    call_data.get('revenue', ''),  # G - Финансы прошлый год
-                    call_data.get('revenue_previous', ''),  # H - Финансы позапрошлый год
-                    call_data.get('capital', ''),  # I - Капитал и резервы
-                    call_data.get('assets', ''),  # J - Основные средства
-                    call_data.get('debit', ''),  # K - Дебиторская задолженность
-                    call_data.get('credit', ''),  # L - Кредиторская задолженность
-                    call_data.get('region', ''),  # M - Регион
-                    call_data.get('okved', ''),  # N - ОКВЭД
-                    call_data.get('okved_main', ''),  # O - ОКВЭД основной
-                    call_data.get('gov_contracts', ''),  # P - Госконтракты
-                    call_data.get('arbitration', ''),  # Q - Арбитражные дела
-                    call_data.get('bankruptcy', ''),  # R - Банкротство
-                    call_data.get('phone', ''),  # S - Телефон (дубль)
-                    call_data.get('email', ''),  # T - Почта
-                    call_data.get('okpd', ''),  # U - ОКПД (основной)
-                    call_data.get('okpd_name', ''),  # V - Наименование ОКПД
-                    call_data.get('okved_name', ''),  # W - ОКВЭД, название
-                    current_date,  # X - Дата первого звонка
-                    manager_name  # Y - Менеджер
+                    f"[{manager_name}] {call_data.get('comment', '')}",  # F
+                    call_data.get('revenue', ''),  # G
+                    call_data.get('revenue_previous', ''),  # H
+                    call_data.get('capital', ''),  # I
+                    call_data.get('assets', ''),  # J
+                    call_data.get('debit', ''),  # K
+                    call_data.get('credit', ''),  # L
+                    call_data.get('region', ''),  # M
+                    call_data.get('okved', ''),  # N
+                    call_data.get('okved_main', ''),  # O
+                    call_data.get('gov_contracts', ''),  # P
+                    call_data.get('arbitration_open_count', ''),  # Q
+                    call_data.get('arbitration_open_sum', ''),  # R
+                    call_data.get('arbitration_last_doc_date', ''),  # S
+                    call_data.get('phone', ''),  # T
+                    call_data.get('okpd', ''),  # U
+                    call_data.get('okpd_name', ''),  # V
+                    call_data.get('okved_name', ''),  # W
+                    current_date,  # X
+                    manager_name  # Y
                 ]
-                
                 self.service.spreadsheets().values().append(
                     spreadsheetId=settings.supervisor_sheet_id,
-                    range='A:Y',
+                    range='A:X',
                     valueInputOption='RAW',
                     body={'values': [row_data]}
                 ).execute()
-            
             logger.info(f"Updated supervisor sheet for {call_data.get('company_name')}")
-            
         except Exception as e:
             logger.error(f"Error updating supervisor sheet: {e}")
-            # Не прерываем процесс при ошибке обновления сводной таблицы
-    
+            
     async def update_specific_columns(self, sheet_id: str, inn: str, updates: Dict[str, Any]) -> bool:
         """
         Обновить только определенные колонки в существующей строке таблицы.

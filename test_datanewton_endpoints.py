@@ -58,6 +58,15 @@ async def test_all_endpoints():
     else:
         logger.warning("⚠ Could not get OGRN for government contracts")
     
+    # 3.1 OKPD List (okpdList)
+    logger.info("\n3.1 Testing /v1/okpdList (OKPD list)")
+    logger.info("-" * 80)
+    try:
+        okpd = await datanewton_api.get_okpd_list(inn=TEST_INN)
+        logger.info(f"OKPD from okpdList: code={okpd.get('code')} name={okpd.get('name')}")
+    except Exception as e:
+        logger.warning(f"okpdList test failed: {e}")
+
     # 4. Арбитражные дела
     logger.info("\n4. Testing /v1/arbitration-cases (arbitration cases)")
     logger.info("-" * 80)
@@ -74,8 +83,9 @@ async def test_all_endpoints():
     if full_data:
         logger.success("✓ Full company data retrieved")
         logger.info(f"  Name: {full_data.get('name')}")
-        logger.info(f"  Revenue: {full_data.get('revenue')}")
+        logger.info(f"  Revenue: {full_data.get('revenue')} (prev: {full_data.get('revenue_previous')})")
         logger.info(f"  Gov contracts: {full_data.get('gov_contracts')}")
+        logger.info(f"  OKPD: {full_data.get('okpd')} - {full_data.get('okpd_name')}")
         logger.info(f"  Arbitration: {full_data.get('arbitration')}")
     else:
         logger.error("✗ Failed to get full company data")
