@@ -22,7 +22,7 @@ async def on_startup(bot: Bot):
     logger.info("Bot starting...")
     
     # Инициализация базы данных
-    await init_db(settings.database_url)
+    await init_db(settings.database_url_effective)
     logger.info("Database initialized")
     
     # Уведомление администраторов о запуске (только тех, кто уже писал боту)

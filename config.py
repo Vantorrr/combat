@@ -1,6 +1,7 @@
 from pydantic_settings import BaseSettings
 from typing import List, Union
 import os
+import re
 
 
 class Settings(BaseSettings):
@@ -42,6 +43,40 @@ class Settings(BaseSettings):
         if not raw:
             return [self.reminder_time]
         return [t.strip() for t in raw.split(",") if t.strip()]
+    
+    @property
+    def database_url_effective(self) -> str:
+        """
+        Возвращает нормализованный DATABASE_URL:
+        - подставляет PG* переменные Railway, если в строке есть плейсхолдеры ${...}
+        - заменяет postgresql:// на postgresql+asyncpg://
+        - добавляет sslmode=require для Railway, если это PostgreSQL и параметр отсутствует
+        """
+        db_url = os.getenv("DATABASE_URL", self.database_url)
+        
+        # Если переданы плейсхолдеры вида ${PG...} — собираем вручную из окружения
+        if "${" in db_url:
+            pg_user = os.getenv("PGUSER")
+            pg_password = os.getenv("PGPASSWORD")
+            pg_host = os.getenv("PGHOST")
+            pg_port = os.getenv("PGPORT")
+            pg_db = os.getenv("PGDATABASE")
+            if all([pg_user, pg_password, pg_host, pg_port, pg_db]):
+                db_url = f"postgresql+asyncpg://{pg_user}:{pg_password}@{pg_host}:{pg_port}/{pg_db}"
+            # иначе оставляем как есть — пусть упадёт явно
+        
+        # Нормализуем схему
+        if db_url.startswith("postgres://"):
+            db_url = db_url.replace("postgres://", "postgresql+asyncpg://", 1)
+        elif db_url.startswith("postgresql://"):
+            db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+        
+        # Добавим sslmode=require если это PostgreSQL и параметра нет
+        if db_url.startswith("postgresql+asyncpg://") and "sslmode=" not in db_url:
+            separator = "&" if "?" in db_url else "?"
+            db_url = f"{db_url}{separator}sslmode=require"
+        
+        return db_url
 
 
 settings = Settings()
