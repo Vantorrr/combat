@@ -56,14 +56,21 @@ class Settings(BaseSettings):
         
         # Если переданы плейсхолдеры вида ${PG...} — собираем вручную из окружения
         if "${" in db_url:
-            pg_user = os.getenv("PGUSER")
-            pg_password = os.getenv("PGPASSWORD")
-            pg_host = os.getenv("PGHOST")
-            pg_port = os.getenv("PGPORT")
-            pg_db = os.getenv("PGDATABASE")
+            # Railway Postgres плагин создаёт переменные с префиксом, попробуем все варианты
+            pg_user = os.getenv("PGUSER") or os.getenv("POSTGRES_USER")
+            pg_password = os.getenv("PGPASSWORD") or os.getenv("POSTGRES_PASSWORD")
+            pg_host = os.getenv("PGHOST") or os.getenv("POSTGRES_HOST")
+            pg_port = os.getenv("PGPORT") or os.getenv("POSTGRES_PORT", "5432")
+            pg_db = os.getenv("PGDATABASE") or os.getenv("POSTGRES_DB")
+            
             if all([pg_user, pg_password, pg_host, pg_port, pg_db]):
                 db_url = f"postgresql+asyncpg://{pg_user}:{pg_password}@{pg_host}:{pg_port}/{pg_db}"
-            # иначе оставляем как есть — пусть упадёт явно
+            else:
+                # Если не удалось собрать — попробуем взять DATABASE_URL напрямую из плагина
+                # Railway обычно создаёт DATABASE_URL автоматически
+                raw_db_url = os.getenv("DATABASE_URL")
+                if raw_db_url and not "${" in raw_db_url:
+                    db_url = raw_db_url
         
         # Нормализуем схему
         if db_url.startswith("postgres://"):
