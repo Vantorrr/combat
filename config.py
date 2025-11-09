@@ -78,10 +78,13 @@ class Settings(BaseSettings):
         elif db_url.startswith("postgresql://"):
             db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
         
-        # Добавим sslmode=require если это PostgreSQL и параметра нет
-        if db_url.startswith("postgresql+asyncpg://") and "sslmode=" not in db_url:
-            separator = "&" if "?" in db_url else "?"
-            db_url = f"{db_url}{separator}sslmode=require"
+        # Добавим sslmode=require только для внешних адресов (не railway.internal)
+        # asyncpg не поддерживает sslmode, используем ssl=require для внешних, ничего для internal
+        if db_url.startswith("postgresql+asyncpg://") and "ssl=" not in db_url and "sslmode=" not in db_url:
+            # Для railway.internal SSL не нужен
+            if "railway.internal" not in db_url:
+                separator = "&" if "?" in db_url else "?"
+                db_url = f"{db_url}{separator}ssl=require"
         
         return db_url
 
