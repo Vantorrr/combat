@@ -215,6 +215,39 @@ class GoogleSheetsService:
             spreadsheetId=sheet_id,
             body=format_request
         ).execute()
+        # Применяем валютное форматирование к нужным колонкам:
+        # G,H,I,J,K,L,O,Q (с учётом удалённого "Регион")
+        gid = self._get_first_sheet_gid(sheet_id)
+        self._apply_currency_format(sheet_id, gid, [6,7,8,9,10,11,14,16])
+
+    def _apply_currency_format(self, spreadsheet_id: str, sheet_gid: int, column_indices: List[int]) -> None:
+        """Применить формат валюты (₽) к указанным колонкам, начиная со 2-й строки."""
+        requests = []
+        for col in column_indices:
+            requests.append({
+                'repeatCell': {
+                    'range': {
+                        'sheetId': sheet_gid,
+                        'startRowIndex': 1,  # со 2-й строки, заголовок не трогаем
+                        'startColumnIndex': col,
+                        'endColumnIndex': col + 1
+                    },
+                    'cell': {
+                        'userEnteredFormat': {
+                            'numberFormat': {
+                                'type': 'CURRENCY',
+                                'pattern': '"₽" #,##0'
+                            }
+                        }
+                    },
+                    'fields': 'userEnteredFormat.numberFormat'
+                }
+            })
+        if requests:
+            self.service.spreadsheets().batchUpdate(
+                spreadsheetId=spreadsheet_id,
+                body={'requests': requests}
+            ).execute()
 
     async def _setup_supervisor_headers(self, sheet_id: str):
         """Настроить заголовки сводной таблицы руководителя (с колонкой Менеджер)."""
@@ -244,6 +277,9 @@ class GoogleSheetsService:
             valueInputOption='RAW',
             body={'values': headers}
         ).execute()
+        # Формат валюты для: G,H,I,J,K,L,P,R
+        gid = self._get_first_sheet_gid(sheet_id)
+        self._apply_currency_format(sheet_id, gid, [6,7,8,9,10,11,15,17])
 
     async def delete_columns_by_titles(self, sheet_id: str, titles: List[str]) -> None:
         """Удалить колонки по заголовкам (точное совпадение названия).
