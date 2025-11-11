@@ -393,7 +393,7 @@ class GoogleSheetsService:
             self.service.spreadsheets().values().append(
                 spreadsheetId=sheet_id,
                 range=f'A{row_num}:T{row_num}',
-                valueInputOption='RAW',
+                valueInputOption='USER_ENTERED',
                 insertDataOption='INSERT_ROWS',
                 body=request
             ).execute()
@@ -464,7 +464,7 @@ class GoogleSheetsService:
             
             # Выполняем пакетное обновление
             body = {
-                'valueInputOption': 'RAW',
+                'valueInputOption': 'USER_ENTERED',
                 'data': updates
             }
             
@@ -546,7 +546,7 @@ class GoogleSheetsService:
                 # Колонка менеджера убрана из структуры — не пишем в Y
                 self.service.spreadsheets().values().batchUpdate(
                     spreadsheetId=settings.supervisor_sheet_id,
-                    body={'valueInputOption': 'RAW', 'data': updates}
+                    body={'valueInputOption': 'USER_ENTERED', 'data': updates}
                 ).execute()
             else:
                 row_data = [
@@ -575,7 +575,7 @@ class GoogleSheetsService:
                 self.service.spreadsheets().values().append(
                     spreadsheetId=settings.supervisor_sheet_id,
                     range='A:U',
-                    valueInputOption='RAW',
+                    valueInputOption='USER_ENTERED',
                     body={'values': [row_data]}
                 ).execute()
             logger.info(f"Updated supervisor sheet for {call_data.get('company_name')}")

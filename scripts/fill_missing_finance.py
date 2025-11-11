@@ -57,14 +57,14 @@ async def fill_sheet(sheet_id: str):
         if len(updates_batch) >= 600:
             gs.service.spreadsheets().values().batchUpdate(
                 spreadsheetId=sheet_id,
-                body={'valueInputOption': 'RAW', 'data': updates_batch}
+                body={'valueInputOption': 'USER_ENTERED', 'data': updates_batch}
             ).execute()
             updates_batch.clear()
 
     if updates_batch:
         gs.service.spreadsheets().values().batchUpdate(
             spreadsheetId=sheet_id,
-            body={'valueInputOption': 'RAW', 'data': updates_batch}
+            body={'valueInputOption': 'USER_ENTERED', 'data': updates_batch}
         ).execute()
 
     logger.info(f"Updated rows: {updated_count}")
