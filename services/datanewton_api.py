@@ -180,28 +180,42 @@ class DataNewtonAPI:
                         # Баланс: основные средства (1150), дебиторка (1230), кредиторка (1520)
                         balances = data.get("balances", {})
                         if balances:
-                            indicators = balances.get("indicators", [])
+                            # Собираем индикаторы из возможных мест: верхний уровень, assets, liabilities
+                            all_indicators = []
+                            try:
+                                if isinstance(balances.get("indicators"), list):
+                                    all_indicators.extend(balances.get("indicators") or [])
+                                if isinstance(balances.get("assets", {}), dict) and isinstance(balances["assets"].get("indicators"), list):
+                                    all_indicators.extend(balances["assets"].get("indicators") or [])
+                                if isinstance(balances.get("liabilities", {}), dict) and isinstance(balances["liabilities"].get("indicators"), list):
+                                    all_indicators.extend(balances["liabilities"].get("indicators") or [])
+                            except Exception:
+                                pass
+
                             # Хелпер извлечения по имени/коду
                             def extract_sum(ind_list, names_or_codes):
                                 for ind in ind_list:
-                                    name = ind.get("name", "")
-                                    code = str(ind.get("code", ""))
-                                    if any(k.lower() in name.lower() for k in names_or_codes if not k.isdigit()) or code in names_or_codes:
-                                        sums = ind.get("sum", {})
-                                        val = sums.get("2024") or sums.get("2023")
+                                    name = ind.get("name", "") or ""
+                                    code = str(ind.get("code", "") or "")
+                                    if any((not k.isdigit()) and (k.lower() in name.lower()) for k in names_or_codes) or code in names_or_codes:
+                                        sums = ind.get("sum", {}) or {}
+                                        # Берем 2024, затем 2023
+                                        val = sums.get("2024")
+                                        if val is None:
+                                            val = sums.get("2023")
                                         if isinstance(val, (int, float)):
                                             # Значения уже в тыс. руб — не делим
                                             return str(int(val))
-                                        return str(val) if val is not None else ""
+                                        return str(val) if val not in (None, "") else ""
                                 return ""
 
                             # 1150 Основные средства
-                            assets = extract_sum(indicators, ["1150", "Основные средства"])
+                            assets = extract_sum(all_indicators, ["1150", "Основные средства"])
                             # 1230 Дебиторская задолженность
-                            debit = extract_sum(indicators, ["1230", "Дебиторская задолженность"])
+                            debit = extract_sum(all_indicators, ["1230", "Дебиторская задолженность"])
                             # 1520 Кредиторская задолженность
-                            credit = extract_sum(indicators, ["1520", "Кредиторская задолженность"])
-                            logger.info(f"Balances parsed: assets={assets}, debit={debit}, credit={credit}")
+                            credit = extract_sum(all_indicators, ["1520", "Кредиторская задолженность"])
+                            logger.info(f"Balances parsed (combined): assets={assets}, debit={debit}, credit={credit}")
                         
                         return {
                             "revenue": revenue,
