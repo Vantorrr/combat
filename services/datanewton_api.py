@@ -180,42 +180,52 @@ class DataNewtonAPI:
                         # Баланс: основные средства (1150), дебиторка (1230), кредиторка (1520)
                         balances = data.get("balances", {})
                         if balances:
-                            # Собираем индикаторы из возможных мест: верхний уровень, assets, liabilities
-                            all_indicators = []
-                            try:
-                                if isinstance(balances.get("indicators"), list):
-                                    all_indicators.extend(balances.get("indicators") or [])
-                                if isinstance(balances.get("assets", {}), dict) and isinstance(balances["assets"].get("indicators"), list):
-                                    all_indicators.extend(balances["assets"].get("indicators") or [])
-                                if isinstance(balances.get("liabilities", {}), dict) and isinstance(balances["liabilities"].get("indicators"), list):
-                                    all_indicators.extend(balances["liabilities"].get("indicators") or [])
-                            except Exception:
-                                pass
+                            # Рекурсивно соберём все узлы с полями name/code/sum из любых вложенных структур
+                            collected: list[dict] = []
+                            def walk(node):
+                                if isinstance(node, dict):
+                                    # Если это узел показателя
+                                    if any(k in node for k in ("name", "code", "sum")):
+                                        collected.append(node)
+                                    # Обойти indicators
+                                    inds = node.get("indicators")
+                                    if isinstance(inds, list):
+                                        for it in inds:
+                                            walk(it)
+                                    # Обойти childrenMap
+                                    ch = node.get("childrenMap")
+                                    if isinstance(ch, dict):
+                                        for _, v in ch.items():
+                                            walk(v)
+                                    # Обойти вложенные объекты (assets/liabilities и др.)
+                                    for k, v in node.items():
+                                        if isinstance(v, (dict, list)) and k not in ("indicators", "childrenMap"):
+                                            walk(v)
+                                elif isinstance(node, list):
+                                    for it in node:
+                                        walk(it)
+                            
+                            walk(balances)
 
-                            # Хелпер извлечения по имени/коду
-                            def extract_sum(ind_list, names_or_codes):
-                                for ind in ind_list:
-                                    name = ind.get("name", "") or ""
-                                    code = str(ind.get("code", "") or "")
-                                    if any((not k.isdigit()) and (k.lower() in name.lower()) for k in names_or_codes) or code in names_or_codes:
-                                        sums = ind.get("sum", {}) or {}
-                                        # Берем 2024, затем 2023
+                            def extract_sum_from_nodes(nodes, names_or_codes):
+                                for nd in nodes:
+                                    name = (nd.get("name") or "").lower()
+                                    code = str(nd.get("code") or "")
+                                    if (code in names_or_codes) or any((not key.isdigit()) and (key.lower() in name) for key in names_or_codes):
+                                        sums = nd.get("sum") or {}
                                         val = sums.get("2024")
                                         if val is None:
                                             val = sums.get("2023")
                                         if isinstance(val, (int, float)):
-                                            # Значения уже в тыс. руб — не делим
                                             return str(int(val))
-                                        return str(val) if val not in (None, "") else ""
+                                        if val not in (None, ""):
+                                            return str(val)
                                 return ""
 
-                            # 1150 Основные средства
-                            assets = extract_sum(all_indicators, ["1150", "Основные средства"])
-                            # 1230 Дебиторская задолженность
-                            debit = extract_sum(all_indicators, ["1230", "Дебиторская задолженность"])
-                            # 1520 Кредиторская задолженность
-                            credit = extract_sum(all_indicators, ["1520", "Кредиторская задолженность"])
-                            logger.info(f"Balances parsed (combined): assets={assets}, debit={debit}, credit={credit}")
+                            assets = extract_sum_from_nodes(collected, ["1150", "Основные средства"])
+                            debit = extract_sum_from_nodes(collected, ["1230", "Дебиторская задолженность"])
+                            credit = extract_sum_from_nodes(collected, ["1520", "Кредиторская задолженность"])
+                            logger.info(f"Balances parsed (walk): assets={assets}, debit={debit}, credit={credit}")
                         
                         return {
                             "revenue": revenue,
