@@ -152,6 +152,7 @@ class GoogleSheetsService:
              "Арбитражи (активные, сумма)",
              "Арбитражи (последний документ, дата)", 
              "Телефон", 
+             "ОКВЭД (основной)",
              "ОКПД (основной)", "Наименование ОКПД",
              "Дата первого звонка"
             ]
@@ -266,13 +267,14 @@ class GoogleSheetsService:
              "Арбитражи (активные, сумма)",
              "Арбитражи (последний документ, дата)", 
              "Телефон", 
+             "ОКВЭД (основной)",
              "ОКПД (основной)", "Наименование ОКПД",
              "Дата первого звонка", "Менеджер"
             ]
         ]
         self.service.spreadsheets().values().update(
             spreadsheetId=sheet_id,
-            range='A1:U1',
+            range='A1:V1',
             valueInputOption='RAW',
             body={'values': headers}
         ).execute()
@@ -337,6 +339,7 @@ class GoogleSheetsService:
                 "Арбитражи (активные, сумма)",
                 "Арбитражи (последний документ, дата)",
                 "Телефон",
+                "ОКВЭД (основной)",
                 "ОКПД (основной)", "Наименование ОКПД",
                 "Дата первого звонка"
             ]
@@ -385,14 +388,15 @@ class GoogleSheetsService:
                 call_data.get('arbitration_open_sum', ''),  # O
                 call_data.get('arbitration_last_doc_date', ''),  # P
                 call_data.get('phone', ''),  # Q (дубль)
-                call_data.get('okpd', ''),  # R
-                call_data.get('okpd_name', ''),  # S
-                self._now_str()  # T
+                call_data.get('okved_main', ''),  # R
+                call_data.get('okpd', ''),  # S
+                call_data.get('okpd_name', ''),  # T
+                self._now_str()  # U
             ]
             request = {'values': [new_row]}
             self.service.spreadsheets().values().append(
                 spreadsheetId=sheet_id,
-                range=f'A{row_num}:T{row_num}',
+                range=f'A{row_num}:U{row_num}',
                 valueInputOption='USER_ENTERED',
                 insertDataOption='INSERT_ROWS',
                 body=request
@@ -458,8 +462,9 @@ class GoogleSheetsService:
                 {'range': f'O{row_index}', 'values': [[call_data.get('arbitration_open_sum', '')]]},
                 {'range': f'P{row_index}', 'values': [[call_data.get('arbitration_last_doc_date', '')]]},
                 {'range': f'Q{row_index}', 'values': [[call_data.get('phone', '')]]},
-                {'range': f'R{row_index}', 'values': [[call_data.get('okpd', '')]]},
-                {'range': f'S{row_index}', 'values': [[call_data.get('okpd_name', '')]]},
+                {'range': f'R{row_index}', 'values': [[call_data.get('okved_main', '')]]},
+                {'range': f'S{row_index}', 'values': [[call_data.get('okpd', '')]]},
+                {'range': f'T{row_index}', 'values': [[call_data.get('okpd_name', '')]]},
             ]
             
             # Выполняем пакетное обновление
@@ -525,7 +530,7 @@ class GoogleSheetsService:
             await self._setup_supervisor_headers(settings.supervisor_sheet_id)
             result = self.service.spreadsheets().values().get(
                 spreadsheetId=settings.supervisor_sheet_id,
-                range='A:U'
+                range='A:V'
             ).execute()
             values = result.get('values', [])
             next_row = 2 if len(values) < 2 else len(values) + 1
@@ -567,14 +572,15 @@ class GoogleSheetsService:
                     call_data.get('arbitration_open_sum', ''),  # O
                     call_data.get('arbitration_last_doc_date', ''),  # P
                     call_data.get('phone', ''),  # Q
-                    call_data.get('okpd', ''),  # R
-                    call_data.get('okpd_name', ''),  # S
-                    current_date,  # T
-                    manager_name  # U
+                    call_data.get('okved_main', ''),  # R
+                    call_data.get('okpd', ''),  # S
+                    call_data.get('okpd_name', ''),  # T
+                    current_date,  # U
+                    manager_name  # V
                 ]
                 self.service.spreadsheets().values().append(
                     spreadsheetId=settings.supervisor_sheet_id,
-                    range='A:U',
+                    range='A:V',
                     valueInputOption='USER_ENTERED',
                     body={'values': [row_data]}
                 ).execute()

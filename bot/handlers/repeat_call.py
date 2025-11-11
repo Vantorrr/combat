@@ -221,8 +221,9 @@ async def save_repeat_call(message: Message, state: FSMContext, session: AsyncSe
                 'O': fresh.get('arbitration_open_sum', ''),
                 'P': fresh.get('arbitration_last_doc_date', ''),
                 'Q': data.get('phone', ''),  # дубль телефона
-                'R': fresh.get('okpd', ''),
-                'S': fresh.get('okpd_name', ''),
+                'R': fresh.get('okved', ''),  # основной ОКВЭД
+                'S': fresh.get('okpd', ''),
+                'T': fresh.get('okpd_name', ''),
             }
             await google_sheets_service.update_specific_columns(
                 data['manager_sheet_id'],
