@@ -171,7 +171,7 @@ class GoogleSheetsService:
              "Арбитражи (последний документ, дата)", 
              "Телефон", 
              "ОКВЭД (основной)",
-             "ОКПД (основной)", "Наименование ОКПД",
+             "Наименование ОКПД",
              "Дата первого звонка",
             ]
         ]
@@ -286,7 +286,7 @@ class GoogleSheetsService:
              "Арбитражи (последний документ, дата)", 
              "Телефон", 
              "ОКВЭД (основной)",
-             "ОКПД (основной)", "Наименование ОКПД",
+             "Наименование ОКПД",
             "Дата первого звонка", "Менеджер",
             ]
         ]
@@ -358,7 +358,7 @@ class GoogleSheetsService:
                 "Арбитражи (последний документ, дата)",
                 "Телефон",
                 "ОКВЭД (основной)",
-                "ОКПД (основной)", "Наименование ОКПД",
+                "Наименование ОКПД",
                 "Дата первого звонка",
             ]
 
@@ -407,14 +407,13 @@ class GoogleSheetsService:
                 call_data.get('arbitration_last_doc_date', ''),  # P
                 call_data.get('phone', ''),  # Q (дубль)
                 call_data.get('okved_main', ''),  # R
-                call_data.get('okpd', ''),  # S
-                call_data.get('okpd_name', ''),  # T
-                self._now_str()  # U
+                call_data.get('okpd_name', ''),  # S
+                self._now_str()  # T
             ]
             request = {'values': [new_row]}
             self.service.spreadsheets().values().append(
                 spreadsheetId=sheet_id,
-                range=f'A{row_num}:U{row_num}',
+                range=f'A{row_num}:T{row_num}',
                 valueInputOption='USER_ENTERED',
                 insertDataOption='INSERT_ROWS',
                 body=request
@@ -481,8 +480,7 @@ class GoogleSheetsService:
                 {'range': f'P{row_index}', 'values': [[call_data.get('arbitration_last_doc_date', '')]]},
                 {'range': f'Q{row_index}', 'values': [[call_data.get('phone', '')]]},
                 {'range': f'R{row_index}', 'values': [[call_data.get('okved_main', '')]]},
-                {'range': f'S{row_index}', 'values': [[call_data.get('okpd', '')]]},
-                {'range': f'T{row_index}', 'values': [[call_data.get('okpd_name', '')]]},
+                {'range': f'S{row_index}', 'values': [[call_data.get('okpd_name', '')]]},
             ]
             # Выполняем пакетное обновление
             body = {
@@ -590,9 +588,8 @@ class GoogleSheetsService:
                     call_data.get('arbitration_last_doc_date', ''),  # P
                     call_data.get('phone', ''),  # Q
                     call_data.get('okved_main', ''),  # R
-                    call_data.get('okpd', ''),  # S
-                    call_data.get('okpd_name', ''),  # T
-                    current_date,  # U
+                    call_data.get('okpd_name', ''),  # S
+                    current_date,  # T
                     manager_name  # V
                 ]
                 self.service.spreadsheets().values().append(
