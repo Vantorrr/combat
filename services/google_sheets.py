@@ -16,6 +16,24 @@ class GoogleSheetsService:
         self.credentials = None
         self.service = None
         self._initialize_service()
+    
+    # --- Helpers ---
+    @staticmethod
+    def _col_letters(start_letter: str, count: int) -> List[str]:
+        """Вернуть массив буквенных адресов колонок, начиная с заданной."""
+        def to_index(letter: str) -> int:
+            idx = 0
+            for ch in letter.upper():
+                idx = idx * 26 + (ord(ch) - ord('A') + 1)
+            return idx
+        def to_letter(index: int) -> str:
+            s = ""
+            while index > 0:
+                index, rem = divmod(index - 1, 26)
+                s = chr(rem + ord('A')) + s
+            return s
+        start_idx = to_index(start_letter)
+        return [to_letter(start_idx + i) for i in range(count)]
         
     def _ensure_oauth_files(self) -> None:
         """Если переданы OAuth файлы через переменные окружения, восстанавливаем их на диск."""
@@ -154,7 +172,10 @@ class GoogleSheetsService:
              "Телефон", 
              "ОКВЭД (основной)",
              "ОКПД (основной)", "Наименование ОКПД",
-             "Дата первого звонка"
+             "Дата первого звонка",
+             # Блок отдельных колонок комментариев (новый → левее)
+             "Комментарий 1", "Комментарий 2", "Комментарий 3", "Комментарий 4", "Комментарий 5",
+             "Комментарий 6", "Комментарий 7", "Комментарий 8", "Комментарий 9", "Комментарий 10",
             ]
         ]
         
@@ -269,12 +290,15 @@ class GoogleSheetsService:
              "Телефон", 
              "ОКВЭД (основной)",
              "ОКПД (основной)", "Наименование ОКПД",
-             "Дата первого звонка", "Менеджер"
+             "Дата первого звонка", "Менеджер",
+             # Блок отдельных колонок комментариев (новый → левее)
+             "Комментарий 1", "Комментарий 2", "Комментарий 3", "Комментарий 4", "Комментарий 5",
+             "Комментарий 6", "Комментарий 7", "Комментарий 8", "Комментарий 9", "Комментарий 10",
             ]
         ]
         self.service.spreadsheets().values().update(
             spreadsheetId=sheet_id,
-            range='A1:V1',
+            range='A1:AF1',
             valueInputOption='RAW',
             body={'values': headers}
         ).execute()
@@ -341,12 +365,14 @@ class GoogleSheetsService:
                 "Телефон",
                 "ОКВЭД (основной)",
                 "ОКПД (основной)", "Наименование ОКПД",
-                "Дата первого звонка"
+                "Дата первого звонка",
+                "Комментарий 1", "Комментарий 2", "Комментарий 3", "Комментарий 4", "Комментарий 5",
+                "Комментарий 6", "Комментарий 7", "Комментарий 8", "Комментарий 9", "Комментарий 10",
             ]
 
             result = self.service.spreadsheets().values().get(
                 spreadsheetId=sheet_id,
-                range='A1:Z1'
+                range='A1:AZ1'
             ).execute()
             current = (result.get('values') or [[]])[0]
 
@@ -393,10 +419,13 @@ class GoogleSheetsService:
                 call_data.get('okpd_name', ''),  # T
                 self._now_str()  # U
             ]
+            # Добавляем 10 колонок комментариев справа: V..AE
+            comment_cols = [comment_prefixed] + [""] * 9
+            new_row.extend(comment_cols)
             request = {'values': [new_row]}
             self.service.spreadsheets().values().append(
                 spreadsheetId=sheet_id,
-                range=f'A{row_num}:U{row_num}',
+                range=f'A{row_num}:AE{row_num}',
                 valueInputOption='USER_ENTERED',
                 insertDataOption='INSERT_ROWS',
                 body=request
@@ -466,6 +495,16 @@ class GoogleSheetsService:
                 {'range': f'S{row_index}', 'values': [[call_data.get('okpd', '')]]},
                 {'range': f'T{row_index}', 'values': [[call_data.get('okpd_name', '')]]},
             ]
+            # Сдвиг блока комментариев (V..AE): новый в V, остальные вправо до AE
+            comment_letters = self._col_letters("V", 10)
+            # Текущие комментарии из этих колонок
+            existing_block = []
+            for i, col in enumerate(comment_letters):
+                idx = 21 + i  # V=22 -> index 21 zero-based
+                existing_block.append(current_row[idx] if len(current_row) > idx else "")
+            new_block = [new_comment] + existing_block[:9]
+            for col, val in zip(comment_letters, new_block):
+                updates.append({'range': f'{col}{row_index}', 'values': [[val]]})
             
             # Выполняем пакетное обновление
             body = {
@@ -530,7 +569,7 @@ class GoogleSheetsService:
             await self._setup_supervisor_headers(settings.supervisor_sheet_id)
             result = self.service.spreadsheets().values().get(
                 spreadsheetId=settings.supervisor_sheet_id,
-                range='A:V'
+                range='A:AF'
             ).execute()
             values = result.get('values', [])
             next_row = 2 if len(values) < 2 else len(values) + 1
@@ -548,6 +587,17 @@ class GoogleSheetsService:
                 new_comment = f"[{manager_name}] [{current_date}] {call_data.get('comment', '')}"
                 updated_comments = f"{new_comment}\n---\n{existing_comments}" if existing_comments else new_comment
                 updates.append({'range': f'F{company_row}', 'values': [[updated_comments]]})
+                # Сдвиг блока комментариев (W..AF) в сводной
+                sup_comment_letters = self._col_letters("W", 10)
+                existing_block = []
+                row_vals = values[company_row - 1]
+                for i, col in enumerate(sup_comment_letters):
+                    idx = 22 + i  # W=23 -> index 22
+                    existing_block.append(row_vals[idx] if len(row_vals) > idx else "")
+                latest = f"[{manager_name}] [{current_date}] {call_data.get('comment', '')}"
+                new_block = [latest] + existing_block[:9]
+                for col, val in zip(sup_comment_letters, new_block):
+                    updates.append({'range': f'{col}{company_row}', 'values': [[val]]})
                 # Колонка менеджера убрана из структуры — не пишем в Y
                 self.service.spreadsheets().values().batchUpdate(
                     spreadsheetId=settings.supervisor_sheet_id,
@@ -578,9 +628,12 @@ class GoogleSheetsService:
                     current_date,  # U
                     manager_name  # V
                 ]
+                # Добавляем комментарии в сводную: W..AF
+                latest = f"[{manager_name}] [{current_date}] {call_data.get('comment', '')}"
+                row_data.extend([latest] + [""] * 9)
                 self.service.spreadsheets().values().append(
                     spreadsheetId=settings.supervisor_sheet_id,
-                    range='A:V',
+                    range='A:AF',
                     valueInputOption='USER_ENTERED',
                     body={'values': [row_data]}
                 ).execute()
