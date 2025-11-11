@@ -236,8 +236,8 @@ class GoogleSheetsService:
                         'userEnteredFormat': {
                             'numberFormat': {
                                 'type': 'CURRENCY',
-                                # Пример: 788 199 ₽
-                                'pattern': '#,##0" ₽"'
+                                # Пример: 788 199 ₽ (пробел как разделитель тысяч)
+                                'pattern': '# ##0" ₽"'
                             }
                         }
                     },
