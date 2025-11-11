@@ -147,13 +147,12 @@ class GoogleSheetsService:
              "Основные средства за прошлый год (тыс рублей)",
              "Дебеторская задолженность за прошлый год (тыс рублей)",
              "Кредиторская задолженность за прошлый год (тыс рублей)",
-             "ОКВЭД", "ОКВЭД (основной)",
              "Госконтракты, сумма заключенных за всё время", 
              "Арбитражи (активные, кол-во)",
              "Арбитражи (активные, сумма)",
              "Арбитражи (последний документ, дата)", 
              "Телефон", 
-             "ОКПД (основной)", "Наименование ОКПД", "ОКВЭД, название",
+             "ОКПД (основной)", "Наименование ОКПД",
              "Дата первого звонка"
             ]
         ]
@@ -216,9 +215,9 @@ class GoogleSheetsService:
             body=format_request
         ).execute()
         # Применяем валютное форматирование к нужным колонкам:
-        # G,H,I,J,K,L,O,Q (с учётом удалённого "Регион")
+        # G,H,I,J,K,L,M,O (с учётом удалённых "Регион" и "ОКВЭД*")
         gid = self._get_first_sheet_gid(sheet_id)
-        self._apply_currency_format(sheet_id, gid, [6,7,8,9,10,11,14,16])
+        self._apply_currency_format(sheet_id, gid, [6,7,8,9,10,11,12,14])
 
     def _apply_currency_format(self, spreadsheet_id: str, sheet_gid: int, column_indices: List[int]) -> None:
         """Применить формат валюты (₽) к указанным колонкам, начиная со 2-й строки."""
@@ -261,25 +260,24 @@ class GoogleSheetsService:
              "Основные средства за прошлый год (тыс рублей)",
              "Дебеторская задолженность за прошлый год (тыс рублей)",
              "Кредиторская задолженность за прошлый год (тыс рублей)",
-             "Регион(+n часов к Москве)", "ОКВЭД", "ОКВЭД (основной)",
              "Госконтракты, сумма заключенных за всё время", 
              "Арбитражи (активные, кол-во)",
              "Арбитражи (активные, сумма)",
              "Арбитражи (последний документ, дата)", 
              "Телефон", 
-             "ОКПД (основной)", "Наименование ОКПД", "ОКВЭД, название",
+             "ОКПД (основной)", "Наименование ОКПД",
              "Дата первого звонка", "Менеджер"
             ]
         ]
         self.service.spreadsheets().values().update(
             spreadsheetId=sheet_id,
-            range='A1:Y1',
+            range='A1:U1',
             valueInputOption='RAW',
             body={'values': headers}
         ).execute()
-        # Формат валюты для: G,H,I,J,K,L,P,R
+        # Формат валюты для: G,H,I,J,K,L,M,O (после удаления Регион/ОКВЭД)
         gid = self._get_first_sheet_gid(sheet_id)
-        self._apply_currency_format(sheet_id, gid, [6,7,8,9,10,11,15,17])
+        self._apply_currency_format(sheet_id, gid, [6,7,8,9,10,11,12,14])
 
     async def delete_columns_by_titles(self, sheet_id: str, titles: List[str]) -> None:
         """Удалить колонки по заголовкам (точное совпадение названия).
@@ -333,13 +331,12 @@ class GoogleSheetsService:
                 "Основные средства за прошлый год (тыс рублей)",
                 "Дебеторская задолженность за прошлый год (тыс рублей)",
                 "Кредиторская задолженность за прошлый год (тыс рублей)",
-                "ОКВЭД", "ОКВЭД (основной)",
                 "Госконтракты, сумма заключенных за всё время",
                 "Арбитражи (активные, кол-во)",
                 "Арбитражи (активные, сумма)",
                 "Арбитражи (последний документ, дата)",
                 "Телефон",
-                "ОКПД (основной)", "Наименование ОКПД", "ОКВЭД, название",
+                "ОКПД (основной)", "Наименование ОКПД",
                 "Дата первого звонка"
             ]
 
@@ -382,22 +379,19 @@ class GoogleSheetsService:
                 call_data.get('assets', ''),  # J
                 call_data.get('debit', ''),  # K
                 call_data.get('credit', ''),  # L
-                call_data.get('okved', ''),  # M
-                call_data.get('okved_main', ''),  # N
-                call_data.get('gov_contracts', ''),  # O
-                call_data.get('arbitration_open_count', ''),  # P
-                call_data.get('arbitration_open_sum', ''),  # Q
-                call_data.get('arbitration_last_doc_date', ''),  # R
-                call_data.get('phone', ''),  # S (дубль)
-                call_data.get('okpd', ''),  # T
-                call_data.get('okpd_name', ''),  # U
-                call_data.get('okved_name', ''),  # V
-                self._now_str()  # W
+                call_data.get('gov_contracts', ''),  # M
+                call_data.get('arbitration_open_count', ''),  # N
+                call_data.get('arbitration_open_sum', ''),  # O
+                call_data.get('arbitration_last_doc_date', ''),  # P
+                call_data.get('phone', ''),  # Q (дубль)
+                call_data.get('okpd', ''),  # R
+                call_data.get('okpd_name', ''),  # S
+                self._now_str()  # T
             ]
             request = {'values': [new_row]}
             self.service.spreadsheets().values().append(
                 spreadsheetId=sheet_id,
-                range=f'A{row_num}:AZ{row_num}',
+                range=f'A{row_num}:T{row_num}',
                 valueInputOption='RAW',
                 insertDataOption='INSERT_ROWS',
                 body=request
@@ -458,16 +452,13 @@ class GoogleSheetsService:
                 {'range': f'J{row_index}', 'values': [[call_data.get('assets', '')]]},
                 {'range': f'K{row_index}', 'values': [[call_data.get('debit', '')]]},
                 {'range': f'L{row_index}', 'values': [[call_data.get('credit', '')]]},
-                {'range': f'M{row_index}', 'values': [[call_data.get('okved', '')]]},
-                {'range': f'N{row_index}', 'values': [[call_data.get('okved_main', '')]]},
-                {'range': f'O{row_index}', 'values': [[call_data.get('gov_contracts', '')]]},
-                {'range': f'P{row_index}', 'values': [[call_data.get('arbitration_open_count', '')]]},
-                {'range': f'Q{row_index}', 'values': [[call_data.get('arbitration_open_sum', '')]]},
-                {'range': f'R{row_index}', 'values': [[call_data.get('arbitration_last_doc_date', '')]]},
-                {'range': f'S{row_index}', 'values': [[call_data.get('phone', '')]]},
-                {'range': f'T{row_index}', 'values': [[call_data.get('okpd', '')]]},
-                {'range': f'U{row_index}', 'values': [[call_data.get('okpd_name', '')]]},
-                {'range': f'V{row_index}', 'values': [[call_data.get('okved_name', '')]]},
+                {'range': f'M{row_index}', 'values': [[call_data.get('gov_contracts', '')]]},
+                {'range': f'N{row_index}', 'values': [[call_data.get('arbitration_open_count', '')]]},
+                {'range': f'O{row_index}', 'values': [[call_data.get('arbitration_open_sum', '')]]},
+                {'range': f'P{row_index}', 'values': [[call_data.get('arbitration_last_doc_date', '')]]},
+                {'range': f'Q{row_index}', 'values': [[call_data.get('phone', '')]]},
+                {'range': f'R{row_index}', 'values': [[call_data.get('okpd', '')]]},
+                {'range': f'S{row_index}', 'values': [[call_data.get('okpd_name', '')]]},
             ]
             
             # Выполняем пакетное обновление
@@ -507,8 +498,7 @@ class GoogleSheetsService:
                         'inn': row[1] if len(row) > 1 else '',
                         'contact_name': row[2] if len(row) > 2 else '',
                         'phone': row[3] if len(row) > 3 else '',
-                        'last_comment': row[5] if len(row) > 5 else '',
-                        'okved': row[12] if len(row) > 12 else ''  # M колонка после удаления "Регион"
+                        'last_comment': row[5] if len(row) > 5 else ''
                     })
             
             return today_calls
@@ -534,7 +524,7 @@ class GoogleSheetsService:
             await self._setup_supervisor_headers(settings.supervisor_sheet_id)
             result = self.service.spreadsheets().values().get(
                 spreadsheetId=settings.supervisor_sheet_id,
-                range='A:Y'
+                range='A:U'
             ).execute()
             values = result.get('values', [])
             next_row = 2 if len(values) < 2 else len(values) + 1
@@ -571,23 +561,19 @@ class GoogleSheetsService:
                     call_data.get('assets', ''),  # J
                     call_data.get('debit', ''),  # K
                     call_data.get('credit', ''),  # L
-                    call_data.get('region', ''),  # M
-                    call_data.get('okved', ''),  # N
-                    call_data.get('okved_main', ''),  # O
-                    call_data.get('gov_contracts', ''),  # P
-                    call_data.get('arbitration_open_count', ''),  # Q
-                    call_data.get('arbitration_open_sum', ''),  # R
-                    call_data.get('arbitration_last_doc_date', ''),  # S
-                    call_data.get('phone', ''),  # T
-                    call_data.get('okpd', ''),  # U
-                    call_data.get('okpd_name', ''),  # V
-                    call_data.get('okved_name', ''),  # W
-                    current_date,  # X
-                    manager_name  # Y
+                    call_data.get('gov_contracts', ''),  # M
+                    call_data.get('arbitration_open_count', ''),  # N
+                    call_data.get('arbitration_open_sum', ''),  # O
+                    call_data.get('arbitration_last_doc_date', ''),  # P
+                    call_data.get('phone', ''),  # Q
+                    call_data.get('okpd', ''),  # R
+                    call_data.get('okpd_name', ''),  # S
+                    current_date,  # T
+                    manager_name  # U
                 ]
                 self.service.spreadsheets().values().append(
                     spreadsheetId=settings.supervisor_sheet_id,
-                    range='A:Y',
+                    range='A:U',
                     valueInputOption='RAW',
                     body={'values': [row_data]}
                 ).execute()
