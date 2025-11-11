@@ -147,7 +147,7 @@ class GoogleSheetsService:
              "Основные средства за прошлый год (тыс рублей)",
              "Дебеторская задолженность за прошлый год (тыс рублей)",
              "Кредиторская задолженность за прошлый год (тыс рублей)",
-             "Регион(+n часов к Москве)", "ОКВЭД", "ОКВЭД (основной)",
+             "ОКВЭД", "ОКВЭД (основной)",
              "Госконтракты, сумма заключенных за всё время", 
              "Арбитражи (активные, кол-во)",
              "Арбитражи (активные, сумма)",
@@ -297,7 +297,7 @@ class GoogleSheetsService:
                 "Основные средства за прошлый год (тыс рублей)",
                 "Дебеторская задолженность за прошлый год (тыс рублей)",
                 "Кредиторская задолженность за прошлый год (тыс рублей)",
-                "Регион(+n часов к Москве)", "ОКВЭД", "ОКВЭД (основной)",
+                "ОКВЭД", "ОКВЭД (основной)",
                 "Госконтракты, сумма заключенных за всё время",
                 "Арбитражи (активные, кол-во)",
                 "Арбитражи (активные, сумма)",
@@ -346,18 +346,17 @@ class GoogleSheetsService:
                 call_data.get('assets', ''),  # J
                 call_data.get('debit', ''),  # K
                 call_data.get('credit', ''),  # L
-                call_data.get('region', ''),  # M
-                call_data.get('okved', ''),  # N
-                call_data.get('okved_main', ''),  # O
-                call_data.get('gov_contracts', ''),  # P
-                call_data.get('arbitration_open_count', ''),  # Q
-                call_data.get('arbitration_open_sum', ''),  # R
-                call_data.get('arbitration_last_doc_date', ''),  # S
-                call_data.get('phone', ''),  # T (дубль)
-                call_data.get('okpd', ''),  # U
-                call_data.get('okpd_name', ''),  # V
-                call_data.get('okved_name', ''),  # W
-                self._now_str()  # X
+                call_data.get('okved', ''),  # M
+                call_data.get('okved_main', ''),  # N
+                call_data.get('gov_contracts', ''),  # O
+                call_data.get('arbitration_open_count', ''),  # P
+                call_data.get('arbitration_open_sum', ''),  # Q
+                call_data.get('arbitration_last_doc_date', ''),  # R
+                call_data.get('phone', ''),  # S (дубль)
+                call_data.get('okpd', ''),  # T
+                call_data.get('okpd_name', ''),  # U
+                call_data.get('okved_name', ''),  # V
+                self._now_str()  # W
             ]
             request = {'values': [new_row]}
             self.service.spreadsheets().values().append(
@@ -423,17 +422,16 @@ class GoogleSheetsService:
                 {'range': f'J{row_index}', 'values': [[call_data.get('assets', '')]]},
                 {'range': f'K{row_index}', 'values': [[call_data.get('debit', '')]]},
                 {'range': f'L{row_index}', 'values': [[call_data.get('credit', '')]]},
-                {'range': f'M{row_index}', 'values': [[call_data.get('region', '')]]},
-                {'range': f'N{row_index}', 'values': [[call_data.get('okved', '')]]},
-                {'range': f'O{row_index}', 'values': [[call_data.get('okved_main', '')]]},
-                {'range': f'P{row_index}', 'values': [[call_data.get('gov_contracts', '')]]},
-                {'range': f'Q{row_index}', 'values': [[call_data.get('arbitration_open_count', '')]]},
-                {'range': f'R{row_index}', 'values': [[call_data.get('arbitration_open_sum', '')]]},
-                {'range': f'S{row_index}', 'values': [[call_data.get('arbitration_last_doc_date', '')]]},
-                {'range': f'T{row_index}', 'values': [[call_data.get('phone', '')]]},
-                {'range': f'U{row_index}', 'values': [[call_data.get('okpd', '')]]},
-                {'range': f'V{row_index}', 'values': [[call_data.get('okpd_name', '')]]},
-                {'range': f'W{row_index}', 'values': [[call_data.get('okved_name', '')]]},
+                {'range': f'M{row_index}', 'values': [[call_data.get('okved', '')]]},
+                {'range': f'N{row_index}', 'values': [[call_data.get('okved_main', '')]]},
+                {'range': f'O{row_index}', 'values': [[call_data.get('gov_contracts', '')]]},
+                {'range': f'P{row_index}', 'values': [[call_data.get('arbitration_open_count', '')]]},
+                {'range': f'Q{row_index}', 'values': [[call_data.get('arbitration_open_sum', '')]]},
+                {'range': f'R{row_index}', 'values': [[call_data.get('arbitration_last_doc_date', '')]]},
+                {'range': f'S{row_index}', 'values': [[call_data.get('phone', '')]]},
+                {'range': f'T{row_index}', 'values': [[call_data.get('okpd', '')]]},
+                {'range': f'U{row_index}', 'values': [[call_data.get('okpd_name', '')]]},
+                {'range': f'V{row_index}', 'values': [[call_data.get('okved_name', '')]]},
             ]
             
             # Выполняем пакетное обновление
@@ -474,7 +472,7 @@ class GoogleSheetsService:
                         'contact_name': row[2] if len(row) > 2 else '',
                         'phone': row[3] if len(row) > 3 else '',
                         'last_comment': row[5] if len(row) > 5 else '',
-                        'okved': row[13] if len(row) > 13 else ''
+                        'okved': row[12] if len(row) > 12 else ''  # M колонка после удаления "Регион"
                     })
             
             return today_calls
