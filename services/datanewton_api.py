@@ -168,11 +168,11 @@ class DataNewtonAPI:
                                         revenue_2023 = sum_data.get("2023", "")
                                         
                                         if revenue_2024:
-                                            # Конвертируем в тысячи рублей
-                                            revenue = str(int(revenue_2024 / 1000)) if isinstance(revenue_2024, (int, float)) else str(revenue_2024)
+                                            # Значения уже приходят в тыс. руб — не делим
+                                            revenue = str(int(revenue_2024)) if isinstance(revenue_2024, (int, float)) else str(revenue_2024)
                                         
                                         if revenue_2023:
-                                            revenue_previous = str(int(revenue_2023 / 1000)) if isinstance(revenue_2023, (int, float)) else str(revenue_2023)
+                                            revenue_previous = str(int(revenue_2023)) if isinstance(revenue_2023, (int, float)) else str(revenue_2023)
                                         
                                         logger.info(f"Revenue 2024: {revenue}, Revenue 2023: {revenue_previous}")
                                         break
@@ -190,7 +190,8 @@ class DataNewtonAPI:
                                         sums = ind.get("sum", {})
                                         val = sums.get("2024") or sums.get("2023")
                                         if isinstance(val, (int, float)):
-                                            return str(int(val / 1000))
+                                            # Значения уже в тыс. руб — не делим
+                                            return str(int(val))
                                         return str(val) if val is not None else ""
                                 return ""
 

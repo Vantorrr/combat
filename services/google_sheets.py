@@ -216,6 +216,35 @@ class GoogleSheetsService:
             body=format_request
         ).execute()
 
+    async def _setup_supervisor_headers(self, sheet_id: str):
+        """Настроить заголовки сводной таблицы руководителя (с колонкой Менеджер)."""
+        headers = [
+            ["Наименование компании", "ИНН", "ФИО ЛПР", "Телефон", 
+             "Дата звонка будущая", 
+             "История звонков (все комментарии)",
+             "Финансы (выручка прошлый год) тыс рублей", 
+             "Финансы (выручка позапрошлый год) тыс рублей",
+             "Капитал и резервы за прошлый год (тыс рублей)",
+             "Основные средства за прошлый год (тыс рублей)",
+             "Дебеторская задолженность за прошлый год (тыс рублей)",
+             "Кредиторская задолженность за прошлый год (тыс рублей)",
+             "Регион(+n часов к Москве)", "ОКВЭД", "ОКВЭД (основной)",
+             "Госконтракты, сумма заключенных за всё время", 
+             "Арбитражи (активные, кол-во)",
+             "Арбитражи (активные, сумма)",
+             "Арбитражи (последний документ, дата)", 
+             "Телефон", 
+             "ОКПД (основной)", "Наименование ОКПД", "ОКВЭД, название",
+             "Дата первого звонка", "Менеджер"
+            ]
+        ]
+        self.service.spreadsheets().values().update(
+            spreadsheetId=sheet_id,
+            range='A1:Y1',
+            valueInputOption='RAW',
+            body={'values': headers}
+        ).execute()
+
     async def delete_columns_by_titles(self, sheet_id: str, titles: List[str]) -> None:
         """Удалить колонки по заголовкам (точное совпадение названия).
         Делает безопасно: сначала определяет индексы, затем удаляет по убыванию индексов.
@@ -300,13 +329,17 @@ class GoogleSheetsService:
             ).execute()
             values = result.get('values', [])
             row_num = 2 if len(values) <= 1 else len(values) + 1
+            # Префиксуем комментарий датой, чтобы история была читабельной
+            comment_prefixed = call_data.get('comment', '')
+            if comment_prefixed:
+                comment_prefixed = f"[{self._now_str()}] {comment_prefixed}"
             new_row = [
                 call_data.get('company_name', ''),  # A
                 call_data.get('inn', ''),  # B
                 call_data.get('contact_name', ''),  # C
                 call_data.get('phone', ''),  # D
                 call_data.get('next_call_date', ''),  # E
-                call_data.get('comment', ''),  # F
+                comment_prefixed,  # F
                 call_data.get('revenue', ''),  # G
                 call_data.get('revenue_previous', ''),  # H
                 call_data.get('capital', ''),  # I
@@ -365,7 +398,8 @@ class GoogleSheetsService:
             existing_comments = current_row[5] if len(current_row) > 5 else ''
             
             # Добавляем новый комментарий к истории
-            new_comment = call_data.get('comment', '')
+            raw_comment = call_data.get('comment', '')
+            new_comment = f"[{self._now_str()}] {raw_comment}" if raw_comment else ""
             if existing_comments:
                 # Добавляем новый комментарий в начало истории
                 updated_comments = f"{new_comment}\n---\n{existing_comments}"
@@ -381,7 +415,25 @@ class GoogleSheetsService:
                 {
                     'range': f'F{row_index}',  # История звонков
                     'values': [[updated_comments]]
-                }
+                },
+                # Финансы / поля из DataNewton
+                {'range': f'G{row_index}', 'values': [[call_data.get('revenue', '')]]},
+                {'range': f'H{row_index}', 'values': [[call_data.get('revenue_previous', '')]]},
+                {'range': f'I{row_index}', 'values': [[call_data.get('capital', '')]]},
+                {'range': f'J{row_index}', 'values': [[call_data.get('assets', '')]]},
+                {'range': f'K{row_index}', 'values': [[call_data.get('debit', '')]]},
+                {'range': f'L{row_index}', 'values': [[call_data.get('credit', '')]]},
+                {'range': f'M{row_index}', 'values': [[call_data.get('region', '')]]},
+                {'range': f'N{row_index}', 'values': [[call_data.get('okved', '')]]},
+                {'range': f'O{row_index}', 'values': [[call_data.get('okved_main', '')]]},
+                {'range': f'P{row_index}', 'values': [[call_data.get('gov_contracts', '')]]},
+                {'range': f'Q{row_index}', 'values': [[call_data.get('arbitration_open_count', '')]]},
+                {'range': f'R{row_index}', 'values': [[call_data.get('arbitration_open_sum', '')]]},
+                {'range': f'S{row_index}', 'values': [[call_data.get('arbitration_last_doc_date', '')]]},
+                {'range': f'T{row_index}', 'values': [[call_data.get('phone', '')]]},
+                {'range': f'U{row_index}', 'values': [[call_data.get('okpd', '')]]},
+                {'range': f'V{row_index}', 'values': [[call_data.get('okpd_name', '')]]},
+                {'range': f'W{row_index}', 'values': [[call_data.get('okved_name', '')]]},
             ]
             
             # Выполняем пакетное обновление
@@ -437,10 +489,18 @@ class GoogleSheetsService:
             if not settings.supervisor_sheet_id:
                 logger.warning("Supervisor sheet ID not configured")
                 return
-            await self._ensure_headers(settings.supervisor_sheet_id)
+            # Обеспечиваем корректные заголовки с колонкой Менеджер
+            try:
+                self.service.spreadsheets().values().get(
+                    spreadsheetId=settings.supervisor_sheet_id,
+                    range='A1:Y1'
+                ).execute()
+            except Exception:
+                pass
+            await self._setup_supervisor_headers(settings.supervisor_sheet_id)
             result = self.service.spreadsheets().values().get(
                 spreadsheetId=settings.supervisor_sheet_id,
-                range='A:AZ'
+                range='A:Y'
             ).execute()
             values = result.get('values', [])
             next_row = 2 if len(values) < 2 else len(values) + 1
@@ -455,7 +515,7 @@ class GoogleSheetsService:
                 updates = []
                 updates.append({'range': f'E{company_row}', 'values': [[call_data.get('next_call_date', '')]]})
                 existing_comments = values[company_row - 1][5] if len(values[company_row - 1]) > 5 else ''
-                new_comment = f"[{manager_name}] {call_data.get('comment', '')}"
+                new_comment = f"[{manager_name}] [{current_date}] {call_data.get('comment', '')}"
                 updated_comments = f"{new_comment}\n---\n{existing_comments}" if existing_comments else new_comment
                 updates.append({'range': f'F{company_row}', 'values': [[updated_comments]]})
                 # Колонка менеджера убрана из структуры — не пишем в Y
@@ -470,7 +530,7 @@ class GoogleSheetsService:
                     call_data.get('contact_name', ''),  # C
                     call_data.get('phone', ''),  # D
                     call_data.get('next_call_date', ''),  # E
-                    f"[{manager_name}] {call_data.get('comment', '')}",  # F
+                    f"[{manager_name}] [{current_date}] {call_data.get('comment', '')}",  # F
                     call_data.get('revenue', ''),  # G
                     call_data.get('revenue_previous', ''),  # H
                     call_data.get('capital', ''),  # I
@@ -493,7 +553,7 @@ class GoogleSheetsService:
                 ]
                 self.service.spreadsheets().values().append(
                     spreadsheetId=settings.supervisor_sheet_id,
-                    range='A:X',
+                    range='A:Y',
                     valueInputOption='RAW',
                     body={'values': [row_data]}
                 ).execute()
