@@ -151,6 +151,7 @@ class DataNewtonAPI:
                         assets = ""
                         debit = ""
                         credit = ""
+                        capital_bal = ""
                         
                         # Получаем финансовые результаты (строка 2110 - выручка)
                         fin_results = data.get("fin_results", {})
@@ -225,21 +226,24 @@ class DataNewtonAPI:
                             assets = extract_sum_from_nodes(collected, ["1150", "Основные средства"])
                             debit = extract_sum_from_nodes(collected, ["1230", "Дебиторская задолженность"])
                             credit = extract_sum_from_nodes(collected, ["1520", "Кредиторская задолженность"])
+                            # 1300 Капитал и резервы
+                            capital_bal = extract_sum_from_nodes(collected, ["1300", "Капитал и резервы"])
                             logger.info(f"Balances parsed (walk): assets={assets}, debit={debit}, credit={credit}")
                         
                         return {
                             "revenue": revenue,
                             "revenue_previous": revenue_previous,
+                            "capital": capital_bal,
                             "assets": assets,
                             "debit": debit,
                             "credit": credit
                         }
                     else:
                         logger.warning(f"Finance API returned status {response.status}")
-                    return {"revenue": "", "revenue_previous": "", "assets": "", "debit": "", "credit": ""}
+                    return {"revenue": "", "revenue_previous": "", "capital": "", "assets": "", "debit": "", "credit": ""}
         except Exception as e:
             logger.error(f"Error fetching finance data: {e}")
-            return {"revenue": "", "revenue_previous": "", "assets": "", "debit": "", "credit": ""}
+            return {"revenue": "", "revenue_previous": "", "capital": "", "assets": "", "debit": "", "credit": ""}
     
     async def get_government_contracts(self, ogrn: str) -> str:
         """Получить данные по госконтрактам (требует ОГРН)"""
