@@ -1,5 +1,7 @@
 import os
 import json
+import base64
+from pathlib import Path
 from typing import List, Dict, Any, Optional
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
@@ -14,6 +16,23 @@ class GoogleSheetsService:
         self.credentials = None
         self.service = None
         self._initialize_service()
+        
+    def _ensure_oauth_files(self) -> None:
+        """Если переданы OAuth файлы через переменные окружения, восстанавливаем их на диск."""
+        client_b64 = os.getenv("GOOGLE_OAUTH_CLIENT_JSON_B64")
+        token_b64 = os.getenv("GOOGLE_OAUTH_TOKEN_JSON_B64")
+        
+        if client_b64:
+            try:
+                Path("oauth_client.json").write_bytes(base64.b64decode(client_b64))
+            except Exception as e:
+                logger.warning(f"Failed to decode GOOGLE_OAUTH_CLIENT_JSON_B64: {e}")
+        
+        if token_b64:
+            try:
+                Path("token.json").write_bytes(base64.b64decode(token_b64))
+            except Exception as e:
+                logger.warning(f"Failed to decode GOOGLE_OAUTH_TOKEN_JSON_B64: {e}")
         
     def _now_str(self) -> str:
         """Возвращает текущую дату с учётом часового пояса из настроек."""
@@ -32,6 +51,9 @@ class GoogleSheetsService:
         Иначе — service account.
         """
         try:
+            # При необходимости восстановить OAuth файлы из переменных окружения
+            self._ensure_oauth_files()
+            
             # Попытка через OAuth (приоритетнее)
             from services.google_sheets_oauth import oauth_client  # lazy import
             try:
