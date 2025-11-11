@@ -235,7 +235,8 @@ class GoogleSheetsService:
                         'userEnteredFormat': {
                             'numberFormat': {
                                 'type': 'CURRENCY',
-                                'pattern': '"₽" #,##0'
+                                # Пример: 788 199 ₽
+                                'pattern': '#,##0" ₽"'
                             }
                         }
                     },
