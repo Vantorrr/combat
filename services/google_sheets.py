@@ -169,9 +169,8 @@ class GoogleSheetsService:
              "Арбитражи (активные, кол-во)",
              "Арбитражи (активные, сумма)",
              "Арбитражи (последний документ, дата)", 
-             "Телефон", 
              "ОКВЭД (основной)",
-             "Наименование ОКПД",
+             "ОКПД (код)", "Наименование ОКПД",
              "Дата первого звонка",
             ]
         ]
@@ -254,8 +253,8 @@ class GoogleSheetsService:
                         'userEnteredFormat': {
                             'numberFormat': {
                                 'type': 'CURRENCY',
-                                # Пример: 788 199 ₽ (пробел как разделитель тысяч)
-                                'pattern': '# ##0" ₽"'
+                                # Используем группер по локали (RU даёт узкий пробел): 1 234 777 ₽
+                                'pattern': '#,##0" ₽"'
                             }
                         }
                     },
@@ -284,9 +283,7 @@ class GoogleSheetsService:
              "Арбитражи (активные, кол-во)",
              "Арбитражи (активные, сумма)",
              "Арбитражи (последний документ, дата)", 
-             "Телефон", 
-             "ОКВЭД (основной)",
-             "Наименование ОКПД",
+             "ОКВЭД (основной)", "ОКПД (код)", "Наименование ОКПД",
             "Дата первого звонка", "Менеджер",
             ]
         ]
@@ -358,7 +355,7 @@ class GoogleSheetsService:
                 "Арбитражи (последний документ, дата)",
                 "Телефон",
                 "ОКВЭД (основной)",
-                "Наименование ОКПД",
+                "ОКПД (код)", "Наименование ОКПД",
                 "Дата первого звонка",
             ]
 
@@ -405,15 +402,16 @@ class GoogleSheetsService:
                 call_data.get('arbitration_open_count', ''),  # N
                 call_data.get('arbitration_open_sum', ''),  # O
                 call_data.get('arbitration_last_doc_date', ''),  # P
-                call_data.get('phone', ''),  # Q (дубль)
+                call_data.get('phone', ''),  # Q (дубль) - будет удалён из структуры, не заполняем
                 call_data.get('okved_main', ''),  # R
-                call_data.get('okpd_name', ''),  # S
-                self._now_str()  # T
+                call_data.get('okpd', ''),  # S (код)
+                call_data.get('okpd_name', ''),  # T
+                self._now_str()  # U
             ]
             request = {'values': [new_row]}
             self.service.spreadsheets().values().append(
                 spreadsheetId=sheet_id,
-                range=f'A{row_num}:T{row_num}',
+                range=f'A{row_num}:U{row_num}',
                 valueInputOption='USER_ENTERED',
                 insertDataOption='INSERT_ROWS',
                 body=request
@@ -478,8 +476,8 @@ class GoogleSheetsService:
                 {'range': f'N{row_index}', 'values': [[call_data.get('arbitration_open_count', '')]]},
                 {'range': f'O{row_index}', 'values': [[call_data.get('arbitration_open_sum', '')]]},
                 {'range': f'P{row_index}', 'values': [[call_data.get('arbitration_last_doc_date', '')]]},
-                {'range': f'Q{row_index}', 'values': [[call_data.get('phone', '')]]},
-                {'range': f'R{row_index}', 'values': [[call_data.get('okved_main', '')]]},
+                {'range': f'Q{row_index}', 'values': [[call_data.get('okved_main', '')]]},
+                {'range': f'R{row_index}', 'values': [[call_data.get('okpd', '')]]},
                 {'range': f'S{row_index}', 'values': [[call_data.get('okpd_name', '')]]},
             ]
             # Выполняем пакетное обновление
@@ -586,11 +584,11 @@ class GoogleSheetsService:
                     call_data.get('arbitration_open_count', ''),  # N
                     call_data.get('arbitration_open_sum', ''),  # O
                     call_data.get('arbitration_last_doc_date', ''),  # P
-                    call_data.get('phone', ''),  # Q
-                    call_data.get('okved_main', ''),  # R
+                    call_data.get('okved_main', ''),  # Q
+                    call_data.get('okpd', ''),  # R (код)
                     call_data.get('okpd_name', ''),  # S
                     current_date,  # T
-                    manager_name  # V
+                    manager_name  # U
                 ]
                 self.service.spreadsheets().values().append(
                     spreadsheetId=settings.supervisor_sheet_id,
