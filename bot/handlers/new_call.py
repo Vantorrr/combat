@@ -284,12 +284,7 @@ async def save_new_call(message: Message, state: FSMContext, session: AsyncSessi
         'director': data.get('company_data', {}).get('director', ''),
         'status': data.get('company_data', {}).get('status', ''),
         'email': (data.get('email') or data.get('company_data', {}).get('email', '')),
-        'region': data.get('company_data', {}).get('region', ''),
         'gov_contracts': data.get('company_data', {}).get('gov_contracts', ''),
-        'arbitration_open_count': data.get('company_data', {}).get('arbitration_open_count', ''),
-        'arbitration_open_sum': data.get('company_data', {}).get('arbitration_open_sum', ''),
-        'arbitration_last_doc_date': data.get('company_data', {}).get('arbitration_last_doc_date', ''),
-        'okpd': data.get('company_data', {}).get('okpd', ''),
         'okpd_name': data.get('company_data', {}).get('okpd_name', '')
     }
     
