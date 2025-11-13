@@ -144,7 +144,7 @@ async def process_contact_name(message: Message, state: FSMContext):
     
     await message.answer(
         "📞 Введите телефон контактного лица:",
-        reply_markup=get_skip_keyboard()
+        reply_markup=get_cancel_keyboard()
     )
 
 
@@ -174,28 +174,7 @@ async def process_phone(message: Message, state: FSMContext):
     )
 
 
-@router.callback_query(NewCallStates.waiting_for_phone, F.data == "skip")
-async def skip_phone(callback: CallbackQuery, state: FSMContext):
-    """Пропустить ввод телефона"""
-    await state.update_data(phone="")
-    data = await state.get_data()
-    api_email = (data.get('company_data') or {}).get('email', '')
-    if not api_email:
-        await state.set_state(NewCallStates.waiting_for_email)
-        await callback.message.edit_text(
-            "📧 Введите email (или пропустите)",
-            reply_markup=get_skip_keyboard()
-        )
-        await callback.answer()
-        return
-
-    await state.set_state(NewCallStates.waiting_for_comment)
-    await callback.message.edit_text(
-        "💬 Введите комментарий к звонку:\n"
-        "(что обсуждали, договоренности, результат)",
-        reply_markup=get_cancel_keyboard()
-    )
-    await callback.answer()
+# Обработчик "skip" для телефона удалён - телефон обязателен
 
 @router.message(NewCallStates.waiting_for_email)
 async def process_email(message: Message, state: FSMContext):

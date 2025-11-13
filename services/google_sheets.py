@@ -233,9 +233,10 @@ class GoogleSheetsService:
             body=format_request
         ).execute()
         # Применяем валютное форматирование к нужным колонкам:
-        # G,H,I,J,K,L,M,O (с учётом удалённых "Регион" и "ОКВЭД*")
+        # G,H,I,J,K,L,M,N,O (финансы + госконтракты + арбитражи сумма)
+        # N (арбитражи кол-во) НЕ форматируем - это штуки, не рубли
         gid = self._get_first_sheet_gid(sheet_id)
-        self._apply_currency_format(sheet_id, gid, [6,7,8,9,10,11,12,14])
+        self._apply_currency_format(sheet_id, gid, [6,7,8,9,10,11,12,14])  # O (индекс 14) - арбитражи сумма
 
     def _apply_currency_format(self, spreadsheet_id: str, sheet_gid: int, column_indices: List[int]) -> None:
         """Применить формат валюты (₽) к указанным колонкам, начиная со 2-й строки."""
