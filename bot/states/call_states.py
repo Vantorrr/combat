@@ -7,7 +7,6 @@ class NewCallStates(StatesGroup):
     confirm_inn = State()
     waiting_for_contact_name = State()
     waiting_for_phone = State()
-    waiting_for_email = State()
     waiting_for_comment = State()
     waiting_for_next_call_date = State()
 
