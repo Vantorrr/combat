@@ -98,12 +98,13 @@ async def process_repeat_inn(message: Message, state: FSMContext, session: Async
         logger.info(f"[repeat_call] found company '{existing_call.company_name}' for inn={inn}")
         await state.set_state(RepeatCallStates.waiting_for_comment)
         
+        # Показываем последний комментарий полностью, без обрезки
         await message.answer(
             f"✅ Найдена компания:\n\n"
             f"*{existing_call.company_name}*\n"
             f"ИНН: {inn}\n"
             f"Последний контакт: {existing_call.contact_name}\n"
-            f"Последний комментарий: {existing_call.comment[:100]}...\n\n"
+            f"Последний комментарий: {existing_call.comment}\n\n"
             f"💬 Введите комментарий по результатам повторного звонка:",
             parse_mode="Markdown",
             reply_markup=get_cancel_keyboard()
