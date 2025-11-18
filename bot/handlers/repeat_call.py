@@ -209,16 +209,18 @@ async def save_repeat_call(message: Message, state: FSMContext, session: AsyncSe
             fresh = {}
             logger.warning(f"[repeat_call] DataNewton refresh failed: {e}")
         if fresh:
+            # Обновляем актуальные финданные и справочники в таблице менеджера
             column_updates = {
-                'G': fresh.get('revenue', ''),
-                'H': fresh.get('revenue_previous', ''),
-                'I': fresh.get('capital', ''),
-                'J': fresh.get('assets', ''),
-                'K': fresh.get('debit', ''),
-                'L': fresh.get('credit', ''),
-                'M': fresh.get('gov_contracts', ''),
-                'N': fresh.get('okved', ''),  # основной ОКВЭД
-                'O': fresh.get('okpd_name', ''),
+                'G': fresh.get('revenue_previous', ''),  # выручка позапрошлый год
+                'H': fresh.get('revenue', ''),  # выручка прошлый год
+                'I': fresh.get('net_profit', ''),  # чистая прибыль прошлый год
+                'J': fresh.get('capital', ''),  # капитал и резервы
+                'K': fresh.get('assets', ''),  # основные средства
+                'L': fresh.get('debit', ''),  # дебиторка
+                'M': fresh.get('credit', ''),  # кредиторка
+                'N': fresh.get('gov_contracts', ''),  # госконтракты (сумма)
+                'O': fresh.get('okved', ''),  # основной ОКВЭД
+                'P': fresh.get('okpd_name', ''),  # наименование ОКПД
             }
             await google_sheets_service.update_specific_columns(
                 data['manager_sheet_id'],

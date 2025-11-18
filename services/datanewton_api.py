@@ -122,8 +122,15 @@ class DataNewtonAPI:
             return {}
     
     async def get_finance_data(self, inn: str) -> Dict[str, Any]:
-        """Получить финансовые данные: выручка (2110), основные средства (1150), дебиторка (1230), кредиторка (1520).
-        Значения конвертируем в тысячи рублей. Берём 2024, fallback 2023.
+        """Получить финансовые данные:
+        - выручка (2110),
+        - чистая прибыль (2400),
+        - основные средства (1150),
+        - дебиторка (1230),
+        - кредиторка (1520),
+        - капитал и резервы (1300).
+        Значения приходят уже в тысячах рублей, поэтому дополнительно не делим.
+        Берём 2024, fallback 2023.
         """
         try:
             async with aiohttp.ClientSession() as session:
@@ -148,6 +155,7 @@ class DataNewtonAPI:
                         # Извлекаем выручку из отчетности
                         revenue = ""
                         revenue_previous = ""
+                        net_profit = ""
                         assets = ""
                         debit = ""
                         credit = ""
@@ -156,27 +164,41 @@ class DataNewtonAPI:
                         # Получаем финансовые результаты (строка 2110 - выручка)
                         fin_results = data.get("fin_results", {})
                         if fin_results:
-                            # Ищем показатель "Выручка" (код строки 2110)
                             indicators = fin_results.get("indicators", [])
-                            for indicator in indicators:
-                                indicator_name = indicator.get("name", "")
-                                # Ищем конкретно "Выручка" (строка 2110)
-                                if indicator_name == "Выручка" or "выручка" in indicator_name.lower():
-                                    sum_data = indicator.get("sum", {})
-                                    if sum_data:
-                                        # Берем конкретно 2024 и 2023
-                                        revenue_2024 = sum_data.get("2024", "")
-                                        revenue_2023 = sum_data.get("2023", "")
-                                        
-                                        if revenue_2024:
-                                            # Значения уже приходят в тыс. руб — не делим
-                                            revenue = str(int(revenue_2024)) if isinstance(revenue_2024, (int, float)) else str(revenue_2024)
-                                        
-                                        if revenue_2023:
-                                            revenue_previous = str(int(revenue_2023)) if isinstance(revenue_2023, (int, float)) else str(revenue_2023)
-                                        
-                                        logger.info(f"Revenue 2024: {revenue}, Revenue 2023: {revenue_previous}")
+
+                            def extract_year_sums(ind_list, name_keywords, code_values):
+                                """Вернуть (val_2024, val_2023) для нужного показателя."""
+                                val_2024 = ""
+                                val_2023 = ""
+                                for indicator in ind_list:
+                                    indicator_name = (indicator.get("name") or "").lower()
+                                    indicator_code = str(indicator.get("code") or "")
+                                    if indicator_code in code_values or any(k in indicator_name for k in name_keywords):
+                                        sum_data = indicator.get("sum", {}) or {}
+                                        if "2024" in sum_data and sum_data["2024"] not in (None, ""):
+                                            v = sum_data["2024"]
+                                            val_2024 = str(int(v)) if isinstance(v, (int, float)) else str(v)
+                                        if "2023" in sum_data and sum_data["2023"] not in (None, ""):
+                                            v = sum_data["2023"]
+                                            val_2023 = str(int(v)) if isinstance(v, (int, float)) else str(v)
                                         break
+                                return val_2024, val_2023
+
+                            # Выручка (строка 2110)
+                            revenue, revenue_previous = extract_year_sums(
+                                indicators,
+                                name_keywords=["выручка"],
+                                code_values=["2110"],
+                            )
+                            logger.info(f"Revenue 2024: {revenue}, Revenue 2023: {revenue_previous}")
+
+                            # Чистая прибыль (строка 2400)
+                            net_profit_2024, _ = extract_year_sums(
+                                indicators,
+                                name_keywords=["чистая прибыль"],
+                                code_values=["2400"],
+                            )
+                            net_profit = net_profit_2024
 
                         # Баланс: основные средства (1150), дебиторка (1230), кредиторка (1520)
                         balances = data.get("balances", {})
@@ -233,6 +255,7 @@ class DataNewtonAPI:
                         return {
                             "revenue": revenue,
                             "revenue_previous": revenue_previous,
+                            "net_profit": net_profit,
                             "capital": capital_bal,
                             "assets": assets,
                             "debit": debit,
@@ -240,10 +263,26 @@ class DataNewtonAPI:
                         }
                     else:
                         logger.warning(f"Finance API returned status {response.status}")
-                    return {"revenue": "", "revenue_previous": "", "capital": "", "assets": "", "debit": "", "credit": ""}
+                    return {
+                        "revenue": "",
+                        "revenue_previous": "",
+                        "net_profit": "",
+                        "capital": "",
+                        "assets": "",
+                        "debit": "",
+                        "credit": ""
+                    }
         except Exception as e:
             logger.error(f"Error fetching finance data: {e}")
-            return {"revenue": "", "revenue_previous": "", "capital": "", "assets": "", "debit": "", "credit": ""}
+            return {
+                "revenue": "",
+                "revenue_previous": "",
+                "net_profit": "",
+                "capital": "",
+                "assets": "",
+                "debit": "",
+                "credit": ""
+            }
     
     async def get_government_contracts(self, ogrn: str) -> str:
         """Получить данные по госконтрактам (требует ОГРН)"""
@@ -477,6 +516,9 @@ class DataNewtonAPI:
             company_data.update({
                 "revenue": finance_data.get("revenue", ""),
                 "revenue_previous": finance_data.get("revenue_previous", ""),
+                "net_profit": finance_data.get("net_profit", ""),
+                # Капитал и резервы теперь берём из баланса (1300), а не charter_capital
+                "capital": finance_data.get("capital", ""),
                 "assets": finance_data.get("assets", ""),
                 "debit": finance_data.get("debit", ""),
                 "credit": finance_data.get("credit", ""),
@@ -486,6 +528,8 @@ class DataNewtonAPI:
             company_data.update({
                 "revenue": "",
                 "revenue_previous": "",
+                "net_profit": "",
+                "capital": "",
                 "assets": "",
                 "debit": "",
                 "credit": "",

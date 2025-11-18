@@ -242,6 +242,7 @@ async def save_new_call(message: Message, state: FSMContext, session: AsyncSessi
         'comment': data['comment'],
         'revenue': data.get('company_data', {}).get('revenue', ''),
         'revenue_previous': data.get('company_data', {}).get('revenue_previous', ''),
+        'net_profit': data.get('company_data', {}).get('net_profit', ''),
         'capital': data.get('company_data', {}).get('capital', ''),
         'assets': data.get('company_data', {}).get('assets', ''),
         'debit': data.get('company_data', {}).get('debit', ''),
