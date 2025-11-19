@@ -26,3 +26,8 @@ class AdminStates(StatesGroup):
     # Состояния для импорта CSV
     waiting_for_csv_manager = State()
     waiting_for_csv_file = State()
+
+
+class AIInsightStates(StatesGroup):
+    """Состояния для AI-инфоповодов по звонкам"""
+    waiting_for_inn = State()

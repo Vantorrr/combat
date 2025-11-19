@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     datanewton_api_key: str
     datanewton_base_url: str = "https://api.datanewton.ru/v1"
     
+    # AI / LLM settings (Phase 2)
+    openai_api_key: str | None = None
+    openai_model: str = "gpt-4.1-mini"
+    
     # Database
     database_url: str = "sqlite+aiosqlite:///./crmbot.db"
     
