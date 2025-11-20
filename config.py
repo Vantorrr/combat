@@ -18,8 +18,10 @@ class Settings(BaseSettings):
     datanewton_base_url: str = "https://api.datanewton.ru/v1"
     
     # AI / LLM settings (Phase 2)
+    # По умолчанию ориентируемся на OpenRouter (OpenAI-совместимый API)
     openai_api_key: str | None = None
-    openai_model: str = "gpt-4.1-mini"
+    openai_base_url: str | None = None  # например: https://openrouter.ai/api/v1
+    openai_model: str = "openai/gpt-4.1-mini"
     
     # Database
     database_url: str = "sqlite+aiosqlite:///./crmbot.db"

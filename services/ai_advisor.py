@@ -9,11 +9,14 @@ from config import settings
 
 
 def _get_openai_client() -> Optional[OpenAI]:
-    """Создаём клиента OpenAI, если задан ключ. Иначе возвращаем None (модуль будет неактивен)."""
+    """Создаём клиента OpenAI/OpenRouter, если задан ключ. Иначе возвращаем None (модуль будет неактивен)."""
     api_key = settings.openai_api_key
     if not api_key:
         logger.warning("OPENAI_API_KEY is not configured; AI advisor is disabled")
         return None
+    # Если указан кастомный base_url (например, OpenRouter) — используем его
+    if settings.openai_base_url:
+        return OpenAI(api_key=api_key, base_url=settings.openai_base_url)
     return OpenAI(api_key=api_key)
 
 
