@@ -69,6 +69,17 @@ async def generate_ai_notification(
     okved_code: str | None,
     okved_name: str | None,
     region: str | None,
+    revenue: str | None = None,
+    revenue_previous: str | None = None,
+    net_profit: str | None = None,
+    capital: str | None = None,
+    assets: str | None = None,
+    debit: str | None = None,
+    credit: str | None = None,
+    gov_contracts: str | None = None,
+    arbitration_open_count: str | None = None,
+    arbitration_open_sum: str | None = None,
+    arbitration_last_doc_date: str | None = None,
     planned_call_date: Optional[datetime] = None,
 ) -> str:
     """
@@ -100,10 +111,38 @@ async def generate_ai_notification(
     last_call_str = last_call_date.strftime("%d.%m.%y") if last_call_date else "неизвестно"
     holidays_text = "; ".join(near_holidays) if near_holidays else "нет подходящих праздников"
 
+    # Собираем факты по финансам / госконтрактам / арбитражам в текстовый блок
+    metrics_lines: List[str] = []
+    if revenue or revenue_previous:
+        metrics_lines.append(
+            f"- Выручка: прошлый год = {revenue or 'н/д'}, позапрошлый = {revenue_previous or 'н/д'} (тыс. руб.)"
+        )
+    if net_profit:
+        metrics_lines.append(f"- Чистая прибыль за прошлый год: {net_profit} тыс. руб.")
+    if capital:
+        metrics_lines.append(f"- Капитал и резервы: {capital} тыс. руб.")
+    if assets:
+        metrics_lines.append(f"- Основные средства: {assets} тыс. руб.")
+    if debit or credit:
+        metrics_lines.append(
+            f"- Баланс расчётов: дебиторка = {debit or 'н/д'}, кредиторка = {credit or 'н/д'} тыс. руб."
+        )
+    if gov_contracts:
+        metrics_lines.append(f"- Сумма госконтрактов (поставщик/заказчик): {gov_contracts} руб.")
+    if arbitration_open_count or arbitration_open_sum:
+        metrics_lines.append(
+            f"- Открытые арбитражные дела: количество = {arbitration_open_count or '0'}, "
+            f"сумма исков ≈ {arbitration_open_sum or '0'} руб."
+        )
+    if arbitration_last_doc_date:
+        metrics_lines.append(f"- Последнее движение по арбитражу: {arbitration_last_doc_date}")
+    metrics_text = "\n".join(metrics_lines) if metrics_lines else "нет существенных финансовых или арбитражных данных."
+
     system_prompt = (
         "Ты помощник по продажам для B2B-менеджеров. "
         "Говоришь по-русски, коротко, по делу, без воды и без фантазий. "
-        "Твоя задача — на основе истории звонков, отрасли (ОКВЭД), региона и ближайших праздников "
+        "Твоя задача — на основе истории звонков, отрасли (ОКВЭД), региона, ближайших праздников "
+        "и блока финансово-юридических фактов (выручка, прибыль, долги, госконтракты, арбитражи) "
         "предложить 3 конкретных инфоповода для следующего звонка.\n\n"
         "Структура ответа строго фиксирована:\n"
         "Звонок сегодня\n"
@@ -112,9 +151,10 @@ async def generate_ai_notification(
         "Последний звонок: ДД.ММ.ГГ — ТЕКСТ\n"
         "\n"
         "Инфоповоды для звонка:\n"
-        "1. ... (на основе новостей отрасли/общей рыночной логики, без выдуманных фактов)\n"
+        "1. ... (на основе отрасли/рынка и общих тенденций, без выдуманных конкретных новостей)\n"
         "2. ... (с учётом праздников +-7 дней, если они есть)\n"
-        "3. ... (глубокий анализ истории комментариев: динамика, переносы, обещания; "
+        "3. ... (глубокий анализ истории комментариев и фин./юридических показателей: динамика, переносы, "
+        "риски по долгам/арбитражам, возможности по выручке и госконтрактам; "
         "используй лучшие практики книжных подходов к продажам — SPIN, Challenger Sale и т.п., "
         "но не обязательно называй их явно).\n\n"
         "НЕ придумывай конкретные несуществующие новости или законы. "
@@ -128,6 +168,9 @@ async def generate_ai_notification(
         f"Регион: {region_part}\n"
         f"Планируемая дата звонка: {base_date.strftime('%d.%m.%Y')}\n"
         f"Ближайшие праздники (+-7 дней): {holidays_text}\n"
+        f"\n"
+        f"Финансовые и юридические факты:\n"
+        f"{metrics_text}\n"
         f"\n"
         f"Последний звонок: {last_call_str} — {last_comment}\n"
         f"\n"

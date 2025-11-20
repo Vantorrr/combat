@@ -91,16 +91,38 @@ async def ai_hint_process_inn(message: Message, state: FSMContext, session: Asyn
     last_call_date = last_call.created_at
     company_name = last_call.company_name or "Не указано"
 
-    # Пытаемся получить дополнительные данные по компании (ОКВЭД, регион)
+    # Пытаемся получить дополнительные данные по компании (ОКВЭД, регион, финансы, арбитражи)
     okved_code = None
     okved_name = None
     region = None
+    revenue = None
+    revenue_previous = None
+    net_profit = None
+    capital = None
+    assets = None
+    debit = None
+    credit = None
+    gov_contracts = None
+    arbitration_open_count = None
+    arbitration_open_sum = None
+    arbitration_last_doc_date = None
     try:
-        company_data = await datanewton_api.get_company_by_inn(inn)
+        company_data = await datanewton_api.get_full_company_data(inn)
         if company_data:
             okved_code = company_data.get("okved")
             okved_name = company_data.get("okved_name")
             region = company_data.get("region")
+            revenue = company_data.get("revenue")
+            revenue_previous = company_data.get("revenue_previous")
+            net_profit = company_data.get("net_profit")
+            capital = company_data.get("capital")
+            assets = company_data.get("assets")
+            debit = company_data.get("debit")
+            credit = company_data.get("credit")
+            gov_contracts = company_data.get("gov_contracts")
+            arbitration_open_count = company_data.get("arbitration_open_count")
+            arbitration_open_sum = company_data.get("arbitration_open_sum")
+            arbitration_last_doc_date = company_data.get("arbitration_last_doc_date")
             if company_data.get("name"):
                 company_name = company_data["name"]
     except Exception as e:
@@ -120,6 +142,17 @@ async def ai_hint_process_inn(message: Message, state: FSMContext, session: Asyn
         okved_code=okved_code,
         okved_name=okved_name,
         region=region,
+        revenue=revenue,
+        revenue_previous=revenue_previous,
+        net_profit=net_profit,
+        capital=capital,
+        assets=assets,
+        debit=debit,
+        credit=credit,
+        gov_contracts=gov_contracts,
+        arbitration_open_count=arbitration_open_count,
+        arbitration_open_sum=arbitration_open_sum,
+        arbitration_last_doc_date=arbitration_last_doc_date,
         planned_call_date=planned_call_date,
     )
 

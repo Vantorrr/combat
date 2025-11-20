@@ -285,6 +285,17 @@ async def save_repeat_call(message: Message, state: FSMContext, session: AsyncSe
                     okved_code=fresh.get('okved') if fresh else None,
                     okved_name=fresh.get('okved_name') if fresh else None,
                     region=fresh.get('region') if fresh else None,
+                    revenue=fresh.get('revenue') if fresh else None,
+                    revenue_previous=fresh.get('revenue_previous') if fresh else None,
+                    net_profit=fresh.get('net_profit') if fresh else None,
+                    capital=fresh.get('capital') if fresh else None,
+                    assets=fresh.get('assets') if fresh else None,
+                    debit=fresh.get('debit') if fresh else None,
+                    credit=fresh.get('credit') if fresh else None,
+                    gov_contracts=fresh.get('gov_contracts') if fresh else None,
+                    arbitration_open_count=fresh.get('arbitration_open_count') if fresh else None,
+                    arbitration_open_sum=fresh.get('arbitration_open_sum') if fresh else None,
+                    arbitration_last_doc_date=fresh.get('arbitration_last_doc_date') if fresh else None,
                     planned_call_date=call_session.next_call_date or datetime.now(),
                 )
                 await message.answer(ai_text)
