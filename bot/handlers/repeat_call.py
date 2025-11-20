@@ -16,6 +16,8 @@ from bot.states.call_states import RepeatCallStates
 from models.database import Manager, CallSession
 from services.google_sheets import get_google_sheets_service
 from services.datanewton_api import datanewton_api
+from services.ai_advisor import generate_ai_notification
+from config import settings
 
 router = Router()
 
@@ -258,6 +260,36 @@ async def save_repeat_call(message: Message, state: FSMContext, session: AsyncSe
                 "Обратитесь к администратору.",
                 reply_markup=get_main_menu()
             )
+        # 3) После успешного сохранения — AI-инфоповод (если есть ключ)
+        if settings.openai_api_key:
+            try:
+                # История звонков по этому ИНН для этого менеджера
+                hist_result = await session.execute(
+                    select(CallSession)
+                    .where(
+                        CallSession.manager_id == data['manager_id'],
+                        CallSession.company_inn == data['inn'],
+                    )
+                    .order_by(CallSession.created_at.asc())
+                )
+                history = hist_result.scalars().all()
+                all_comments = [s.comment for s in history if s.comment]
+                last_call_date = history[-1].created_at if history else call_session.created_at
+
+                ai_text = await generate_ai_notification(
+                    inn=data['inn'],
+                    company_name=data['company_name'],
+                    last_comment=data['comment'],
+                    last_call_date=last_call_date,
+                    all_comments=all_comments,
+                    okved_code=fresh.get('okved') if fresh else None,
+                    okved_name=fresh.get('okved_name') if fresh else None,
+                    region=fresh.get('region') if fresh else None,
+                    planned_call_date=call_session.next_call_date or datetime.now(),
+                )
+                await message.answer(ai_text)
+            except Exception as e:
+                logger.warning(f"[repeat_call] AI notification failed: {e}")
     except Exception as e:
         logger.error(f"Error updating Google Sheets: {e}")
         await message.answer(
