@@ -167,17 +167,11 @@ async def process_manager_name(message: Message, state: FSMContext, session: Asy
                 f"Менеджер может начать работу, написав боту /start",
                 reply_markup=get_admin_menu()
             )
-        else:
-            await creating_msg.edit_text(
-                "❌ Ошибка при создании Google таблицы.\n"
-                "Проверьте настройки Google Sheets API.",
-                reply_markup=get_admin_menu()
-            )
     except Exception as e:
         logger.error(f"Error creating manager: {e}")
         await creating_msg.edit_text(
-            "❌ Произошла ошибка при создании менеджера.\n"
-            "Проверьте логи для деталей.",
+            f"❌ Ошибка при создании Google таблицы:\n{str(e)[:300]}\n\n"
+            "Проверьте настройки или обратитесь к разработчику.",
             reply_markup=get_admin_menu()
         )
     

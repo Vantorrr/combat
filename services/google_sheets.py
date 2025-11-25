@@ -110,8 +110,10 @@ class GoogleSheetsService:
             raise RuntimeError("Spreadsheet has no sheets")
         return sheets[0]['properties']['sheetId']
     
-    async def create_manager_sheet(self, manager_name: str) -> Optional[str]:
-        """Создать новую таблицу для менеджера"""
+    async def create_manager_sheet(self, manager_name: str) -> str:
+        """Создать новую таблицу для менеджера.
+        Возвращает ID созданной таблицы или вызывает исключение.
+        """
         try:
             # Проверяем, используем ли OAuth
             if hasattr(self.credentials, 'token'):
@@ -130,6 +132,10 @@ class GoogleSheetsService:
             else:
                 # Service Account - копируем шаблон
                 drive_service = build('drive', 'v3', credentials=self.credentials)
+                # Проверка наличия шаблона
+                if not settings.manager_sheet_template_id:
+                    raise ValueError("Template ID not configured in settings")
+
                 copy_response = drive_service.files().copy(
                     fileId=settings.manager_sheet_template_id,
                     body={'name': f'CRM - {manager_name}'}
@@ -144,14 +150,14 @@ class GoogleSheetsService:
                 logger.info(f"Created new sheet for {manager_name}: {new_sheet_id}")
                 return new_sheet_id
             
-            return None
+            raise RuntimeError("Failed to obtain new sheet ID")
             
         except HttpError as error:
             logger.error(f"An error occurred while creating sheet: {error}")
-            return None
+            raise RuntimeError(f"Google API Error: {error}")
         except Exception as e:
             logger.error(f"Unexpected error creating sheet: {e}")
-            return None
+            raise e
     
     async def _setup_sheet_headers(self, sheet_id: str):
         """Настроить заголовки таблицы - АКТУАЛЬНАЯ СХЕМА
