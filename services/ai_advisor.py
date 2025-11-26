@@ -156,7 +156,7 @@ def calculate_financial_analysis(
     return "\n".join(lines)
 
 
-    async def generate_ai_notification(
+async def generate_ai_notification(
     *,
     inn: str,
     company_name: str,
