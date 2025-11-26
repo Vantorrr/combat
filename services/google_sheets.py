@@ -440,6 +440,37 @@ class GoogleSheetsService:
             logger.error(f"Error updating specific columns: {e}")
             return False
 
+    async def get_today_calls(self, sheet_id: str) -> List[Dict[str, Any]]:
+        """Получить список звонков, запланированных на сегодня."""
+        try:
+            result = self.service.spreadsheets().values().get(
+                spreadsheetId=sheet_id,
+                range='A:AZ'
+            ).execute()
+            values = result.get('values', [])
+            
+            today = self._now_str()
+            today_calls = []
+            
+            # Пропускаем заголовок
+            if len(values) > 1:
+                for row in values[1:]:
+                    # ИНН - колонка B (index 1), Дата след. звонка - колонка E (index 4)
+                    if len(row) > 4:
+                        next_call_date = row[4].strip()
+                        if next_call_date == today:
+                            today_calls.append({
+                                'company_name': row[0] if len(row) > 0 else 'Не указано',
+                                'inn': row[1] if len(row) > 1 else 'Не указано',
+                                'phone': row[3] if len(row) > 3 else 'Не указано',
+                            })
+                            
+            return today_calls
+            
+        except Exception as e:
+            logger.error(f"Error fetching today calls: {e}")
+            return []
+
     async def add_new_call(self, sheet_id: str, call_data: Dict[str, Any]) -> bool:
         """Добавить данные о новом звонке (СТАРАЯ РАБОЧАЯ СХЕМА: по sheet_id)."""
         try:
