@@ -133,63 +133,55 @@ class GoogleSheetsService:
         except Exception as e:
             logger.error(f"Failed to set locale for {spreadsheet_id}: {e}")
 
-    async def create_manager_sheet(self, manager_name: str) -> str:
-        """Создать новую таблицу для менеджера.
-        Создает новую таблицу с нуля, устанавливает права доступа (всем по ссылке - редактор)
-        и настраивает структуру.
+    async def create_manager_sheet(self, manager_name: str) -> Optional[str]:
+        """
+        Создать новую таблицу для менеджера — как раньше.
+
+        - Если используется OAuth (твой аккаунт) — создаём новую таблицу с нуля.
+        - Если используется Service Account — копируем шаблон по MANAGER_SHEET_TEMPLATE_ID.
         """
         try:
-            # 1. Создаем пустую таблицу
-            spreadsheet_body = {
-                'properties': {
-                    'title': f'CRM - {manager_name}'
+            if hasattr(self.credentials, "token"):
+                # OAuth: создаём напрямую
+                spreadsheet_body = {
+                    "properties": {
+                        "title": f"CRM - {manager_name}"
+                    }
                 }
-            }
-            
-            spreadsheet = self.service.spreadsheets().create(
-                body=spreadsheet_body
-            ).execute()
-            
-            new_sheet_id = spreadsheet.get('spreadsheetId')
-            
-            if not new_sheet_id:
-                raise RuntimeError("Failed to obtain new sheet ID")
-            
-            logger.info(f"Created new sheet for {manager_name}: {new_sheet_id}")
+                spreadsheet = (
+                    self.service.spreadsheets()
+                    .create(body=spreadsheet_body)
+                    .execute()
+                )
+                new_sheet_id = spreadsheet.get("spreadsheetId")
+            else:
+                # Service Account: копируем шаблон (старая логика)
+                drive_service = build("drive", "v3", credentials=self.credentials)
+                if not settings.manager_sheet_template_id:
+                    raise ValueError("MANAGER_SHEET_TEMPLATE_ID is not configured")
+                copy_response = (
+                    drive_service.files()
+                    .copy(
+                        fileId=settings.manager_sheet_template_id,
+                        body={"name": f"CRM - {manager_name}"},
+                    )
+                    .execute()
+                )
+                new_sheet_id = copy_response.get("id")
 
-            # 2. Даем доступ (Share to anyone with link as Editor)
-            # Это нужно, чтобы ты и менеджер могли открыть таблицу, 
-            # так как владелец - сервисный аккаунт.
-            try:
-                drive_service = build('drive', 'v3', credentials=self.credentials)
-                permission = {
-                    'type': 'anyone',
-                    'role': 'writer'
-                }
-                drive_service.permissions().create(
-                    fileId=new_sheet_id,
-                    body=permission,
-                    fields='id'
-                ).execute()
-                logger.info(f"Shared sheet {new_sheet_id} with anyone (writer)")
-            except Exception as e:
-                logger.error(f"Failed to share sheet: {e}")
-                # Не прерываем процесс, но логируем ошибку
+            if new_sheet_id:
+                await self._setup_sheet_headers(new_sheet_id)
+                logger.info(f"Created new sheet for {manager_name}: {new_sheet_id}")
+                return new_sheet_id
 
-            # 3. Устанавливаем локаль РФ (чтобы разделитель тысяч был пробелом)
-            self.set_spreadsheet_locale(new_sheet_id, 'ru_RU')
+            return None
 
-            # 4. Настраиваем заголовки и формат
-            await self._setup_sheet_headers(new_sheet_id)
-            
-            return new_sheet_id
-            
         except HttpError as error:
             logger.error(f"An error occurred while creating sheet: {error}")
-            raise RuntimeError(f"Google API Error: {error}")
+            return None
         except Exception as e:
             logger.error(f"Unexpected error creating sheet: {e}")
-            raise e
+            return None
     
     async def _setup_sheet_headers(self, sheet_id: str):
         """Настроить заголовки таблицы - АКТУАЛЬНАЯ СХЕМА"""
