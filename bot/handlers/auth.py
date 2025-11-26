@@ -42,24 +42,31 @@ async def cmd_auth(message: types.Message, state: FSMContext):
         await message.answer("❌ Ошибка: конфигурация OAuth клиента не найдена.")
         return
 
-    # Создаем flow с redirect_uri='urn:ietf:wg:oauth:2.0:oob' для ручного копирования кода
     try:
+        # Используем правильный redirect_uri для manual copy/paste
         flow = Flow.from_client_config(
             client_config=client_config,
             scopes=SCOPES,
             redirect_uri='urn:ietf:wg:oauth:2.0:oob'
         )
         
-        auth_url, _ = flow.authorization_url(prompt='consent')
+        # access_type='offline' обязателен для получения refresh_token
+        # include_granted_scopes='true' помогает при инкрементальной авторизации
+        auth_url, _ = flow.authorization_url(
+            access_type='offline',
+            include_granted_scopes='true',
+            prompt='consent'  # Force approval prompt to ensure we get a refresh token
+        )
         
-        await state.update_data(flow_config=client_config) # Сохраняем конфиг во временном хранилище, так как Flow не сериализуется
+        await state.update_data(flow_config=client_config)
         await state.set_state(AuthStates.waiting_for_code)
         
         await message.answer(
-            "🔑 **Авторизация Google**\n\n"
+            "🔑 **Авторизация Google (Server-Side)**\n\n"
             "1. Перейдите по ссылке ниже.\n"
             "2. Авторизуйтесь в нужном аккаунте Google.\n"
-            "3. Скопируйте полученный код и отправьте его сюда ответным сообщением.\n\n"
+            "3. **ВАЖНО:** Скопируйте код с экрана подтверждения.\n"
+            "4. Отправьте код сюда ответным сообщением.\n\n"
             f"{auth_url}",
             parse_mode="Markdown"
         )
@@ -99,18 +106,14 @@ async def process_auth_code(message: types.Message, state: FSMContext):
         with open('token.b64', 'w') as token_b64:
             token_b64.write(b64_str)
             
-        await message.answer("✅ **Авторизация успешна!**\nТокен сохранен на сервере.\nТеперь бот должен перезагрузиться или подхватить новый токен.")
+        await message.answer("✅ **Авторизация успешна!**\nТокен сохранен на сервере.\nБот должен подхватить его автоматически.")
         
-        # Пытаемся обновить сервис "на лету" (не обязательно сработает для текущих процессов, но для новых - да)
-        # Но лучше просто сказать пользователю, что все ок.
-        # Можно триггернуть ре-инит сервиса, если очень хочется:
+        # Пытаемся обновить сервис
         from services.google_sheets import get_google_sheets_service
         service = get_google_sheets_service()
-        # Force re-init logic if we added it (currently __init__ calls _initialize_service)
-        # We can manually call _initialize_service again
         try:
             service._initialize_service()
-            await message.answer("♻️ Сервис таблиц перезагружен с новыми правами.")
+            await message.answer("♻️ Сервис таблиц перезагружен с новыми правами (OAuth).")
         except Exception as e:
             logger.warning(f"Service re-init warning: {e}")
 
@@ -118,6 +121,5 @@ async def process_auth_code(message: types.Message, state: FSMContext):
         
     except Exception as e:
         logger.error(f"Token exchange failed: {e}")
-        await message.answer(f"❌ Ошибка при получении токена: {e}\nПопробуйте /auth заново.")
+        await message.answer(f"❌ Ошибка при обмене кода: {e}\nПопробуйте /auth заново.")
         await state.clear()
-
