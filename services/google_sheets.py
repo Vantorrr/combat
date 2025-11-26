@@ -443,6 +443,165 @@ class GoogleSheetsService:
             logger.error(f"Error updating specific columns: {e}")
             return False
 
+    async def add_new_call(self, manager_name: str, call_data: Dict[str, Any]) -> bool:
+        """Добавить новый звонок в таблицу менеджера"""
+        try:
+            # 1. Получаем или создаем таблицу менеджера
+            # Пытаемся найти таблицу по имени
+            spreadsheet_id = None
+            try:
+                query = f"name = 'CRM - {manager_name}' and trashed = false"
+                drive_service = build('drive', 'v3', credentials=self.credentials)
+                results = drive_service.files().list(q=query, fields="files(id, name)").execute()
+                files = results.get('files', [])
+                if files:
+                    spreadsheet_id = files[0]['id']
+            except Exception as e:
+                logger.warning(f"Error searching for sheet: {e}")
+
+            # Если не нашли - создаем
+            if not spreadsheet_id:
+                spreadsheet_id = await self.create_manager_sheet(manager_name)
+                if not spreadsheet_id:
+                    logger.error(f"Could not create sheet for {manager_name}")
+                    return False
+            
+            # 2. Убеждаемся, что заголовки верные
+            await self._setup_sheet_headers(spreadsheet_id)
+            
+            # 3. Подготовка данных для строки (строго по порядку заголовков)
+            current_date = self._now_str()
+            
+            # Формируем комментарий
+            comment = f"[{current_date}] {call_data.get('comment', '')}"
+            
+            row_data = [
+                call_data.get('company_name', ''),          # A
+                call_data.get('inn', ''),                   # B
+                call_data.get('contact_name', ''),          # C
+                call_data.get('phone', ''),                 # D
+                call_data.get('next_call_date', ''),        # E
+                comment,                                    # F
+                call_data.get('revenue_previous', ''),      # G
+                call_data.get('revenue', ''),               # H
+                call_data.get('net_profit', ''),            # I
+                call_data.get('capital', ''),               # J
+                call_data.get('assets', ''),                # K
+                call_data.get('debit', ''),                 # L
+                call_data.get('credit', ''),                # M
+                call_data.get('gov_contracts', ''),         # N
+                call_data.get('okved_main', ''),            # O
+                call_data.get('okpd_name', ''),             # P
+                current_date                                # Q
+            ]
+            
+            # 4. Добавляем строку
+            self.service.spreadsheets().values().append(
+                spreadsheetId=spreadsheet_id,
+                range='A:Q',
+                valueInputOption='USER_ENTERED',
+                body={'values': [row_data]}
+            ).execute()
+            
+            # 5. Обновляем сводную таблицу (если включено)
+            if settings.supervisor_sheet_id:
+                await self.update_supervisor_sheet(manager_name, call_data)
+                
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error adding new call to sheet: {e}")
+            return False
+
+    async def update_repeat_call(self, manager_name: str, call_data: Dict[str, Any]) -> bool:
+        """Обновить данные при повторном звонке"""
+        try:
+            # 1. Ищем таблицу
+            spreadsheet_id = None
+            try:
+                query = f"name = 'CRM - {manager_name}' and trashed = false"
+                drive_service = build('drive', 'v3', credentials=self.credentials)
+                results = drive_service.files().list(q=query, fields="files(id, name)").execute()
+                files = results.get('files', [])
+                if files:
+                    spreadsheet_id = files[0]['id']
+            except Exception as e:
+                logger.warning(f"Error searching for sheet: {e}")
+                return False
+                
+            if not spreadsheet_id:
+                logger.warning(f"Sheet for {manager_name} not found")
+                return False
+
+            # 2. Ищем строку с ИНН
+            result = self.service.spreadsheets().values().get(
+                spreadsheetId=spreadsheet_id,
+                range='B:B'  # ИНН в колонке B
+            ).execute()
+            
+            inn_values = result.get('values', [])
+            row_index = None
+            target_inn = str(call_data.get('inn', '')).strip()
+            
+            for i, row in enumerate(inn_values):
+                if row and str(row[0]).strip() == target_inn:
+                    row_index = i + 1
+                    break
+            
+            if not row_index:
+                logger.warning(f"INN {target_inn} not found in sheet")
+                # Можно попробовать добавить как новый, но логика повторного звонка подразумевает существование
+                return False
+
+            # 3. Обновляем данные
+            # Читаем текущий комментарий (F)
+            comment_result = self.service.spreadsheets().values().get(
+                spreadsheetId=spreadsheet_id,
+                range=f'F{row_index}'
+            ).execute()
+            existing_comment = comment_result.get('values', [[b'']])[0][0]
+            
+            current_date = self._now_str()
+            new_comment_part = f"[{current_date}] {call_data.get('comment', '')}"
+            
+            # Если комментарий уже есть, добавляем новый сверху через разделитель
+            if existing_comment:
+                full_comment = f"{new_comment_part}\n---\n{existing_comment}"
+            else:
+                full_comment = new_comment_part
+
+            updates = [
+                {'range': f'C{row_index}', 'values': [[call_data.get('contact_name', '')]]}, # LPR
+                {'range': f'E{row_index}', 'values': [[call_data.get('next_call_date', '')]]}, # Date
+                {'range': f'F{row_index}', 'values': [[full_comment]]}, # Comment
+                # Обновляем финансовые данные, если они пришли свежие
+                {'range': f'G{row_index}', 'values': [[call_data.get('revenue_previous', '')]]},
+                {'range': f'H{row_index}', 'values': [[call_data.get('revenue', '')]]},
+                {'range': f'I{row_index}', 'values': [[call_data.get('net_profit', '')]]},
+                {'range': f'J{row_index}', 'values': [[call_data.get('capital', '')]]},
+                {'range': f'K{row_index}', 'values': [[call_data.get('assets', '')]]},
+                {'range': f'L{row_index}', 'values': [[call_data.get('debit', '')]]},
+                {'range': f'M{row_index}', 'values': [[call_data.get('credit', '')]]},
+                {'range': f'N{row_index}', 'values': [[call_data.get('gov_contracts', '')]]},
+                {'range': f'O{row_index}', 'values': [[call_data.get('okved_main', '')]]},
+                {'range': f'P{row_index}', 'values': [[call_data.get('okpd_name', '')]]},
+            ]
+            
+            self.service.spreadsheets().values().batchUpdate(
+                spreadsheetId=spreadsheet_id,
+                body={'valueInputOption': 'USER_ENTERED', 'data': updates}
+            ).execute()
+            
+            # 4. Обновляем сводную
+            if settings.supervisor_sheet_id:
+                await self.update_supervisor_sheet(manager_name, call_data)
+                
+            return True
+
+        except Exception as e:
+            logger.error(f"Error updating repeat call: {e}")
+            return False
+
 
 # Инициализация сервиса будет происходить при первом использовании
 google_sheets_service = None
