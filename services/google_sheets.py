@@ -489,6 +489,38 @@ class GoogleSheetsService:
                 insertDataOption='INSERT_ROWS',
                 body=request
             ).execute()
+
+            # Принудительно применяем формат валюты для финансовых колонок в новой строке
+            # G(6) - N(13)
+            gid = self._get_first_sheet_gid(sheet_id)
+            requests = []
+            for col_idx in range(6, 14):
+                requests.append({
+                    'repeatCell': {
+                        'range': {
+                            'sheetId': gid,
+                            'startRowIndex': row_num - 1,
+                            'endRowIndex': row_num,
+                            'startColumnIndex': col_idx,
+                            'endColumnIndex': col_idx + 1
+                        },
+                        'cell': {
+                            'userEnteredFormat': {
+                                'numberFormat': {
+                                    'type': 'CURRENCY',
+                                    'pattern': '#,##0" ₽"'
+                                }
+                            }
+                        },
+                        'fields': 'userEnteredFormat.numberFormat'
+                    }
+                })
+            
+            self.service.spreadsheets().batchUpdate(
+                spreadsheetId=sheet_id,
+                body={'requests': requests}
+            ).execute()
+
             return True
         except Exception as e:
             logger.error(f"Error adding new call: {e}")
@@ -559,6 +591,37 @@ class GoogleSheetsService:
             self.service.spreadsheets().values().batchUpdate(
                 spreadsheetId=sheet_id,
                 body=body
+            ).execute()
+
+            # Принудительно обновляем формат валюты для измененной строки
+            # G(6) - N(13)
+            gid = self._get_first_sheet_gid(sheet_id)
+            requests = []
+            for col_idx in range(6, 14):
+                requests.append({
+                    'repeatCell': {
+                        'range': {
+                            'sheetId': gid,
+                            'startRowIndex': row_index - 1,
+                            'endRowIndex': row_index,
+                            'startColumnIndex': col_idx,
+                            'endColumnIndex': col_idx + 1
+                        },
+                        'cell': {
+                            'userEnteredFormat': {
+                                'numberFormat': {
+                                    'type': 'CURRENCY',
+                                    'pattern': '#,##0" ₽"'
+                                }
+                            }
+                        },
+                        'fields': 'userEnteredFormat.numberFormat'
+                    }
+                })
+            
+            self.service.spreadsheets().batchUpdate(
+                spreadsheetId=sheet_id,
+                body={'requests': requests}
             ).execute()
 
             return True
