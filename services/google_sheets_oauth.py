@@ -25,21 +25,42 @@ class GoogleOAuthClient:
         self.creds: Optional[Credentials] = None
 
     def _load_credentials(self) -> None:
+        """Загрузка и обновление токена.
+        На сервере НЕ запускаем run_local_server, ожидаем, что токен уже создан через /auth.
+        """
         if os.path.exists(self.token_file):
-            self.creds = Credentials.from_authorized_user_file(self.token_file, SCOPES)
+            try:
+                self.creds = Credentials.from_authorized_user_file(self.token_file, SCOPES)
+            except Exception as e:
+                logger.error(f"Error loading token.json: {e}")
+                self.creds = None
 
         if not self.creds or not self.creds.valid:
             if self.creds and self.creds.expired and self.creds.refresh_token:
-                self.creds.refresh(Request())
-            else:
-                flow = InstalledAppFlow.from_client_secrets_file(self.oauth_client_file, SCOPES)
-                self.creds = flow.run_local_server(port=0)
-            with open(self.token_file, "w") as token:
-                token.write(self.creds.to_json())
+                try:
+                    logger.info("Refreshing expired OAuth token...")
+                    self.creds.refresh(Request())
+                    # Сохраняем обновленный токен
+                    with open(self.token_file, "w") as token:
+                        token.write(self.creds.to_json())
+                except Exception as e:
+                    logger.error(f"Failed to refresh token: {e}")
+                    self.creds = None
+            
+            # Если после рефреша всё ещё нет кредов — не запускаем локальный сервер
+            # (мы на сервере, браузера нет). Пусть пользователь юзает /auth.
+            if not self.creds or not self.creds.valid:
+                logger.warning("OAuth token invalid/missing and cannot be refreshed. Please use /auth command.")
+                return
 
     def get_sheets_service(self):
-        self._load_credentials()
-        return build("sheets", "v4", credentials=self.creds)
+        try:
+            self._load_credentials()
+            if self.creds and self.creds.valid:
+                return build("sheets", "v4", credentials=self.creds)
+        except Exception as e:
+            logger.error(f"Failed to get sheets service via OAuth: {e}")
+        return None
 
     def get_drive_service(self):
         self._load_credentials()

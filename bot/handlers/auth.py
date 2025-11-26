@@ -28,6 +28,14 @@ def get_oauth_client_config():
         except Exception as e:
             logger.error(f"Failed to decode GOOGLE_OAUTH_CLIENT_JSON_B64: {e}")
     
+    # Попытка прочитать из b64 файла, если json нет
+    if not os.path.exists("oauth_client.json") and os.path.exists("oauth_client.b64"):
+        try:
+            b64_data = Path("oauth_client.b64").read_text().strip().replace("\n", "")
+            Path("oauth_client.json").write_bytes(base64.b64decode(b64_data))
+        except Exception as e:
+            logger.error(f"Failed to restore oauth_client.json from b64: {e}")
+
     if os.path.exists("oauth_client.json"):
         with open("oauth_client.json", "r") as f:
             return json.load(f)

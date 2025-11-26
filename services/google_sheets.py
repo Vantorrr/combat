@@ -36,8 +36,38 @@ class GoogleSheetsService:
         return [to_letter(start_idx + i) for i in range(count)]
         
     def _ensure_oauth_files(self) -> None:
-        """Если переданы OAuth файлы через переменные окружения, восстанавливаем их на диск."""
-        pass  # OAuth больше не используем в рантайме, чтобы не зависеть от локальных токенов
+        """
+        Восстанавливаем OAuth файлы из переменных окружения ИЛИ из base64-файлов.
+        """
+        client_b64_env = os.getenv("GOOGLE_OAUTH_CLIENT_JSON_B64")
+        token_b64_env = os.getenv("GOOGLE_OAUTH_TOKEN_JSON_B64")
+        
+        # 1. Пробуем восстановить oauth_client.json
+        if client_b64_env:
+            try:
+                Path("oauth_client.json").write_bytes(base64.b64decode(client_b64_env))
+            except Exception as e:
+                logger.warning(f"Failed to decode GOOGLE_OAUTH_CLIENT_JSON_B64: {e}")
+        elif os.path.exists("oauth_client.b64"):
+            try:
+                # Читаем base64 из файла, очищаем от пробелов/переносов
+                b64_data = Path("oauth_client.b64").read_text().strip().replace("\n", "")
+                Path("oauth_client.json").write_bytes(base64.b64decode(b64_data))
+            except Exception as e:
+                logger.warning(f"Failed to restore oauth_client.json from b64 file: {e}")
+
+        # 2. Пробуем восстановить token.json
+        if token_b64_env:
+            try:
+                Path("token.json").write_bytes(base64.b64decode(token_b64_env))
+            except Exception as e:
+                logger.warning(f"Failed to decode GOOGLE_OAUTH_TOKEN_JSON_B64: {e}")
+        elif os.path.exists("token.b64"):
+            try:
+                b64_data = Path("token.b64").read_text().strip().replace("\n", "")
+                Path("token.json").write_bytes(base64.b64decode(b64_data))
+            except Exception as e:
+                logger.warning(f"Failed to restore token.json from b64 file: {e}")
         
     def _now_str(self) -> str:
         """Возвращает текущую дату с учётом часового пояса из настроек."""
@@ -52,10 +82,29 @@ class GoogleSheetsService:
     
     def _initialize_service(self):
         """Инициализация сервиса Google Sheets.
-        Всегда используем Service Account.
+        Если есть oauth_client.json/token.json — используем OAuth.
+        Иначе — service account.
         """
         try:
-            # Service account
+            # При необходимости восстановить OAuth файлы
+            self._ensure_oauth_files()
+            
+            # Попытка через OAuth (приоритетнее)
+            # Мы импортируем внутри метода, чтобы избежать циклических импортов, если они есть,
+            # и чтобы не падать при старте, если модуля нет (хотя он есть).
+            try:
+                from services.google_sheets_oauth import oauth_client
+                sheets_service = oauth_client.get_sheets_service()
+                # Если oauth_client вернул сервис, значит токены есть и валидны (или обновлены)
+                if sheets_service:
+                    self.service = sheets_service
+                    self.credentials = oauth_client.creds
+                    logger.info("Google Sheets via OAuth (User Account)")
+                    return
+            except Exception as oauth_err:
+                logger.warning(f"OAuth not configured or failed, fallback to service account: {oauth_err}")
+
+            # Fallback: service account
             sa_json_env = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
             scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
             if sa_json_env:
@@ -67,7 +116,7 @@ class GoogleSheetsService:
                     scopes=scopes
                 )
             self.service = build('sheets', 'v4', credentials=self.credentials)
-            logger.info("Google Sheets via Service Account (Clean creation mode)")
+            logger.info("Google Sheets via Service Account")
         except Exception as e:
             logger.error(f"Failed to initialize Google Sheets service: {e}")
             raise
