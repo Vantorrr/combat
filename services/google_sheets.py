@@ -330,13 +330,10 @@ class GoogleSheetsService:
                 return
             # Обеспечиваем корректные заголовки с колонкой Менеджер
             try:
-                self.service.spreadsheets().values().get(
-                    spreadsheetId=settings.supervisor_sheet_id,
-                    range='A1:R1'
-                ).execute()
-            except Exception:
-                pass
-            await self._setup_supervisor_headers(settings.supervisor_sheet_id)
+                await self._setup_supervisor_headers(settings.supervisor_sheet_id)
+            except Exception as e:
+                logger.warning(f"Failed to setup supervisor headers: {e}")
+
             result = self.service.spreadsheets().values().get(
                 spreadsheetId=settings.supervisor_sheet_id,
                 range='A:R'
