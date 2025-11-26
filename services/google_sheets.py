@@ -65,39 +65,33 @@ class GoogleSheetsService:
     
     def _initialize_service(self):
         """Инициализация сервиса Google Sheets.
-        Если есть oauth_client.json/token.json — используем OAuth.
-        Иначе — service account.
+
+        ВАЖНО: на сервере больше НЕ пытаемся ходить через OAuth, чтобы не висеть
+        на браузерной авторизации. Всегда используем service account.
         """
         try:
-            # При необходимости восстановить OAuth файлы из переменных окружения
+            # При необходимости восстановить OAuth-файлы из переменных окружения
+            # (это нужно только для локальных утилит, основной сервис их не использует)
             self._ensure_oauth_files()
-            
-            # Попытка через OAuth (приоритетнее)
-            from services.google_sheets_oauth import oauth_client  # lazy import
-            try:
-                sheets_service = oauth_client.get_sheets_service()
-                self.service = sheets_service
-                self.credentials = oauth_client.creds
-                logger.info("Google Sheets via OAuth")
-                return
-            except Exception as oauth_err:
-                logger.warning(f"OAuth not configured, fallback to service account: {oauth_err}")
 
-            # Fallback: service account
-            # 1) Через переменную окружения GOOGLE_SERVICE_ACCOUNT_JSON (рекомендуется для Railway)
+            # Только service account
             sa_json_env = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
-            scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+            scopes = [
+                "https://www.googleapis.com/auth/spreadsheets",
+                "https://www.googleapis.com/auth/drive",
+            ]
             if sa_json_env:
                 info = json.loads(sa_json_env)
-                self.credentials = service_account.Credentials.from_service_account_info(info, scopes=scopes)
-            else:
-                # 2) Через файл по пути из настроек
-                self.credentials = service_account.Credentials.from_service_account_file(
-                    settings.google_sheets_credentials_file,
-                    scopes=scopes
+                self.credentials = service_account.Credentials.from_service_account_info(
+                    info, scopes=scopes
                 )
-            self.service = build('sheets', 'v4', credentials=self.credentials)
-            logger.info("Google Sheets via Service Account")
+            else:
+                self.credentials = service_account.Credentials.from_service_account_file(
+                    settings.google_sheets_credentials_file, scopes=scopes
+                )
+
+            self.service = build("sheets", "v4", credentials=self.credentials)
+            logger.info("Google Sheets via Service Account (OAuth disabled for runtime)")
         except Exception as e:
             logger.error(f"Failed to initialize Google Sheets service: {e}")
             raise
@@ -135,39 +129,23 @@ class GoogleSheetsService:
 
     async def create_manager_sheet(self, manager_name: str) -> Optional[str]:
         """
-        Создать новую таблицу для менеджера — как раньше.
-
-        - Если используется OAuth (твой аккаунт) — создаём новую таблицу с нуля.
-        - Если используется Service Account — копируем шаблон по MANAGER_SHEET_TEMPLATE_ID.
+        Создать новую таблицу для менеджера через service account,
+        КОПИРУЯ готовый шаблон (как было, когда всё работало).
         """
         try:
-            if hasattr(self.credentials, "token"):
-                # OAuth: создаём напрямую
-                spreadsheet_body = {
-                    "properties": {
-                        "title": f"CRM - {manager_name}"
-                    }
-                }
-                spreadsheet = (
-                    self.service.spreadsheets()
-                    .create(body=spreadsheet_body)
-                    .execute()
+            drive_service = build("drive", "v3", credentials=self.credentials)
+            if not settings.manager_sheet_template_id:
+                raise ValueError("MANAGER_SHEET_TEMPLATE_ID is not configured")
+
+            copy_response = (
+                drive_service.files()
+                .copy(
+                    fileId=settings.manager_sheet_template_id,
+                    body={"name": f"CRM - {manager_name}"},
                 )
-                new_sheet_id = spreadsheet.get("spreadsheetId")
-            else:
-                # Service Account: копируем шаблон (старая логика)
-                drive_service = build("drive", "v3", credentials=self.credentials)
-                if not settings.manager_sheet_template_id:
-                    raise ValueError("MANAGER_SHEET_TEMPLATE_ID is not configured")
-                copy_response = (
-                    drive_service.files()
-                    .copy(
-                        fileId=settings.manager_sheet_template_id,
-                        body={"name": f"CRM - {manager_name}"},
-                    )
-                    .execute()
-                )
-                new_sheet_id = copy_response.get("id")
+                .execute()
+            )
+            new_sheet_id = copy_response.get("id")
 
             if new_sheet_id:
                 await self._setup_sheet_headers(new_sheet_id)
@@ -177,10 +155,10 @@ class GoogleSheetsService:
             return None
 
         except HttpError as error:
-            logger.error(f"An error occurred while creating sheet: {error}")
+            logger.error(f"An error occurred while creating sheet (template copy): {error}")
             return None
         except Exception as e:
-            logger.error(f"Unexpected error creating sheet: {e}")
+            logger.error(f"Unexpected error creating sheet (template copy): {e}")
             return None
     
     async def _setup_sheet_headers(self, sheet_id: str):
