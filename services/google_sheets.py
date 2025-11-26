@@ -109,48 +109,80 @@ class GoogleSheetsService:
         if not sheets:
             raise RuntimeError("Spreadsheet has no sheets")
         return sheets[0]['properties']['sheetId']
-    
+
+    def set_spreadsheet_locale(self, spreadsheet_id: str, locale: str = 'ru_RU') -> None:
+        """Установить локаль таблицы (например, 'ru_RU')."""
+        try:
+            request = {
+                'requests': [
+                    {
+                        'updateSpreadsheetProperties': {
+                            'properties': {
+                                'locale': locale
+                            },
+                            'fields': 'locale'
+                        }
+                    }
+                ]
+            }
+            self.service.spreadsheets().batchUpdate(
+                spreadsheetId=spreadsheet_id,
+                body=request
+            ).execute()
+            logger.info(f"Set locale {locale} for spreadsheet {spreadsheet_id}")
+        except Exception as e:
+            logger.error(f"Failed to set locale for {spreadsheet_id}: {e}")
+
     async def create_manager_sheet(self, manager_name: str) -> str:
         """Создать новую таблицу для менеджера.
-        Возвращает ID созданной таблицы или вызывает исключение.
+        Создает новую таблицу с нуля, устанавливает права доступа (всем по ссылке - редактор)
+        и настраивает структуру.
         """
         try:
-            # Проверяем, используем ли OAuth
-            if hasattr(self.credentials, 'token'):
-                # OAuth - создаем напрямую
-                spreadsheet_body = {
-                    'properties': {
-                        'title': f'CRM - {manager_name}'
-                    }
+            # 1. Создаем пустую таблицу
+            spreadsheet_body = {
+                'properties': {
+                    'title': f'CRM - {manager_name}'
                 }
-                
-                spreadsheet = self.service.spreadsheets().create(
-                    body=spreadsheet_body
-                ).execute()
-                
-                new_sheet_id = spreadsheet.get('spreadsheetId')
-            else:
-                # Service Account - копируем шаблон
-                drive_service = build('drive', 'v3', credentials=self.credentials)
-                # Проверка наличия шаблона
-                if not settings.manager_sheet_template_id:
-                    raise ValueError("Template ID not configured in settings")
+            }
+            
+            spreadsheet = self.service.spreadsheets().create(
+                body=spreadsheet_body
+            ).execute()
+            
+            new_sheet_id = spreadsheet.get('spreadsheetId')
+            
+            if not new_sheet_id:
+                raise RuntimeError("Failed to obtain new sheet ID")
+            
+            logger.info(f"Created new sheet for {manager_name}: {new_sheet_id}")
 
-                copy_response = drive_service.files().copy(
-                    fileId=settings.manager_sheet_template_id,
-                    body={'name': f'CRM - {manager_name}'}
+            # 2. Даем доступ (Share to anyone with link as Editor)
+            # Это нужно, чтобы ты и менеджер могли открыть таблицу, 
+            # так как владелец - сервисный аккаунт.
+            try:
+                drive_service = build('drive', 'v3', credentials=self.credentials)
+                permission = {
+                    'type': 'anyone',
+                    'role': 'writer'
+                }
+                drive_service.permissions().create(
+                    fileId=new_sheet_id,
+                    body=permission,
+                    fields='id'
                 ).execute()
-                
-                new_sheet_id = copy_response.get('id')
+                logger.info(f"Shared sheet {new_sheet_id} with anyone (writer)")
+            except Exception as e:
+                logger.error(f"Failed to share sheet: {e}")
+                # Не прерываем процесс, но логируем ошибку
+
+            # 3. Устанавливаем локаль РФ (чтобы разделитель тысяч был пробелом)
+            self.set_spreadsheet_locale(new_sheet_id, 'ru_RU')
+
+            # 4. Настраиваем заголовки и формат
+            await self._setup_sheet_headers(new_sheet_id)
             
-            if new_sheet_id:
-                # Настраиваем заголовки
-                await self._setup_sheet_headers(new_sheet_id)
-                
-                logger.info(f"Created new sheet for {manager_name}: {new_sheet_id}")
-                return new_sheet_id
-            
-            raise RuntimeError("Failed to obtain new sheet ID")
+            return new_sheet_id
             
         except HttpError as error:
             logger.error(f"An error occurred while creating sheet: {error}")
@@ -160,15 +192,7 @@ class GoogleSheetsService:
             raise e
     
     async def _setup_sheet_headers(self, sheet_id: str):
-        """Настроить заголовки таблицы - АКТУАЛЬНАЯ СХЕМА
-        
-        Важные изменения:
-        - G: выручка позапрошлый год
-        - H: выручка прошлый год
-        - I: чистая прибыль за прошлый год
-        - J: капитал и резервы за прошлый год
-        - далее все показатели за прошлый год
-        """
+        """Настроить заголовки таблицы - АКТУАЛЬНАЯ СХЕМА"""
         headers = [
             [
                 "Наименование компании",  # A
@@ -269,7 +293,7 @@ class GoogleSheetsService:
                         'userEnteredFormat': {
                             'numberFormat': {
                                 'type': 'CURRENCY',
-                                # Используем группер по локали (RU даёт узкий пробел): 1 234 777 ₽
+                                # #,##0 в русской локали даст 1 234 555.
                                 'pattern': '#,##0" ₽"'
                             }
                         }
@@ -451,6 +475,7 @@ class GoogleSheetsService:
             
             for i, row in enumerate(values):
                 if len(row) > 1 and row[1] == inn:  # ИНН в колонке B
+                
                     row_index = i + 1
                     break
             
