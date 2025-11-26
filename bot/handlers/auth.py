@@ -114,7 +114,13 @@ async def process_auth_code(message: types.Message, state: FSMContext):
         with open('token.b64', 'w') as token_b64:
             token_b64.write(b64_str)
             
-        await message.answer("✅ **Авторизация успешна!**\nТокен сохранен на сервере.\nБот должен подхватить его автоматически.")
+        await message.answer(
+            "✅ **Авторизация успешна!**\n"
+            "Токен сохранен на сервере.\n\n"
+            "⚠️ **ВАЖНО: ЧТОБЫ АВТОРИЗАЦИЯ НЕ СЛЕТЕЛА**\n"
+            "Скопируйте код ниже и добавьте его в Railway Variables как `GOOGLE_OAUTH_TOKEN_JSON_B64`:\n"
+            f"```\n{b64_str}\n```"
+        )
         
         # Пытаемся обновить сервис
         from services.google_sheets import get_google_sheets_service
