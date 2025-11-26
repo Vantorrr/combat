@@ -15,6 +15,7 @@ from bot.states.call_states import AdminStates
 from bot.keyboards.main import get_cancel_keyboard, get_admin_menu
 from models.database import Manager
 from services.google_sheets import get_google_sheets_service
+from services.datanewton_api import datanewton_api
 
 router = Router()
 
@@ -184,28 +185,42 @@ async def process_csv_file(message: Message, state: FSMContext, session: AsyncSe
                     error_count += 1
                     continue
                 
-                # Подготавливаем данные
+                # Подготавливаем базовые данные
+                inn = row[1].strip()
+                company_name = row[0].strip()
+                
+                # Пробуем обогатить данные через API (финансы, ОКВЭД и т.д.)
+                # Это может занять время, но зато таблица будет полной.
+                company_api_data = {}
+                if inn:
+                    try:
+                        # Задержка перед запросом к API, чтобы не ловить 429
+                        await asyncio.sleep(0.5)
+                        api_result = await datanewton_api.get_full_company_data(inn)
+                        if api_result:
+                            company_api_data = api_result
+                    except Exception as e:
+                        logger.warning(f"Failed to fetch API data for INN {inn}: {e}")
+
                 call_data = {
-                    'company_name': row[0].strip(),
-                    'inn': row[1].strip(),
+                    'company_name': company_api_data.get('name') or company_name,
+                    'inn': inn,
                     'contact_name': row[2].strip() if len(row) > 2 else '',
                     'phone': row[3].strip() if len(row) > 3 else '',
                     'first_call_date': row[4].strip() if len(row) > 4 else datetime.now().strftime('%d.%m.%y'),
                     'next_call_date': row[5].strip() if len(row) > 5 else '',
                     'comment': _format_imported_comments(row),
-                    'revenue': row[9].strip() if len(row) > 9 else '',
-                    'revenue_previous': row[10].strip() if len(row) > 10 else '',
-                    'capital': row[11].strip() if len(row) > 11 else '',
-                    'assets': row[12].strip() if len(row) > 12 else '',
-                    'debit': row[13].strip() if len(row) > 13 else '',
-                    'credit': row[14].strip() if len(row) > 14 else '',
-                    'region': row[15].strip() if len(row) > 15 else '',
-                    'okved': row[16].strip() if len(row) > 16 else '',
-                    'okved_main': row[17].strip() if len(row) > 17 else '',
-                    'gov_contracts': row[18].strip() if len(row) > 18 else '',
-                    'arbitration': row[19].strip() if len(row) > 19 else '',
-                    'bankruptcy': row[20].strip() if len(row) > 20 else '',
-                    'email': row[22].strip() if len(row) > 22 else '',
+                    # Данные из API (если есть) или из CSV (если API не вернул)
+                    'revenue': str(company_api_data.get('revenue', '')) or (row[9].strip() if len(row) > 9 else ''),
+                    'revenue_previous': str(company_api_data.get('revenue_previous', '')) or (row[10].strip() if len(row) > 10 else ''),
+                    'capital': str(company_api_data.get('capital', '')) or (row[11].strip() if len(row) > 11 else ''),
+                    'assets': str(company_api_data.get('assets', '')) or (row[12].strip() if len(row) > 12 else ''),
+                    'debit': str(company_api_data.get('debit', '')) or (row[13].strip() if len(row) > 13 else ''),
+                    'credit': str(company_api_data.get('credit', '')) or (row[14].strip() if len(row) > 14 else ''),
+                    'net_profit': str(company_api_data.get('net_profit', '')), # Чистая прибыль только из API
+                    'gov_contracts': str(company_api_data.get('gov_contracts', '')) or (row[18].strip() if len(row) > 18 else ''),
+                    'okved_main': str(company_api_data.get('okved', '')) or (row[17].strip() if len(row) > 17 else ''),
+                    'okpd_name': str(company_api_data.get('okpd_name', '')), # ОКПД только из API
                 }
                 
                 # Добавляем в таблицу менеджера
