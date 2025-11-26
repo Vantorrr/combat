@@ -102,7 +102,6 @@ async def setup_bot_commands(bot: Bot):
         BotCommand(command="cancel", description="Отменить текущее действие"),
         BotCommand(command="id", description="Получить свой Telegram ID"),
         BotCommand(command="ai_hint", description="AI-инфоповод по компании (по ИНН)"),
-        BotCommand(command="auth", description="Авторизация Google (только для админа)"),
     ]
     await bot.set_my_commands(commands)
 
@@ -138,7 +137,7 @@ async def main():
     dp.include_router(sheet_info.router)
     dp.include_router(csv_import.router)
     dp.include_router(ai_advisor.router)
-    dp.include_router(auth.router)
+    # dp.include_router(auth.router)  # Auth только для админских целей, скрываем из main
     # Debug роутер временно отключен
     # dp.include_router(debug.router)
     
