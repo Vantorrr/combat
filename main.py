@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
 from models.database import init_db, get_session, Manager
-from bot.handlers import start, new_call, repeat_call, admin, utils, sheet_info, csv_import, ai_advisor
+from bot.handlers import start, new_call, repeat_call, admin, utils, sheet_info, csv_import, ai_advisor, auth
 from services.google_sheets import get_google_sheets_service
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
@@ -102,6 +102,7 @@ async def setup_bot_commands(bot: Bot):
         BotCommand(command="cancel", description="Отменить текущее действие"),
         BotCommand(command="id", description="Получить свой Telegram ID"),
         BotCommand(command="ai_hint", description="AI-инфоповод по компании (по ИНН)"),
+        BotCommand(command="auth", description="Авторизация Google (только для админа)"),
     ]
     await bot.set_my_commands(commands)
 
@@ -137,6 +138,7 @@ async def main():
     dp.include_router(sheet_info.router)
     dp.include_router(csv_import.router)
     dp.include_router(ai_advisor.router)
+    dp.include_router(auth.router)
     # Debug роутер временно отключен
     # dp.include_router(debug.router)
     
