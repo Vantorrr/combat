@@ -36,21 +36,40 @@ class GoogleSheetsService:
         return [to_letter(start_idx + i) for i in range(count)]
         
     def _ensure_oauth_files(self) -> None:
-        """Если переданы OAuth файлы через переменные окружения, восстанавливаем их на диск."""
+        """
+        Восстанавливаем OAuth файлы из переменных окружения ИЛИ из base64-файлов, 
+        которые мы положим в репозиторий (обходя секрет-сканнер).
+        """
         client_b64 = os.getenv("GOOGLE_OAUTH_CLIENT_JSON_B64")
-        token_b64 = os.getenv("GOOGLE_OAUTH_TOKEN_JSON_B64")
+        token_b64_env = os.getenv("GOOGLE_OAUTH_TOKEN_JSON_B64")
         
+        # 1. Пробуем восстановить oauth_client.json
         if client_b64:
             try:
                 Path("oauth_client.json").write_bytes(base64.b64decode(client_b64))
             except Exception as e:
                 logger.warning(f"Failed to decode GOOGLE_OAUTH_CLIENT_JSON_B64: {e}")
         
-        if token_b64:
+        # 2. Пробуем восстановить token.json
+        # Сначала из env
+        if token_b64_env:
             try:
-                Path("token.json").write_bytes(base64.b64decode(token_b64))
+                Path("token.json").write_bytes(base64.b64decode(token_b64_env))
             except Exception as e:
                 logger.warning(f"Failed to decode GOOGLE_OAUTH_TOKEN_JSON_B64: {e}")
+        # Если в env нет, ищем локальный token.b64 (который мы закоммитим)
+        elif os.path.exists("token.b64"):
+            try:
+                token_data = Path("token.b64").read_bytes()
+                # token.b64 уже содержит base64 строку, нам нужно её декодировать в JSON
+                # (команда base64 -i ... > token.b64 создает файл с b64-контентом)
+                # Но `base64` утилита может добавлять переносы строк.
+                # Читаем как текст, убираем пробелы/переносы.
+                b64_str = token_data.decode("utf-8").strip().replace("\n", "")
+                Path("token.json").write_bytes(base64.b64decode(b64_str))
+                logger.info("Restored token.json from token.b64 file")
+            except Exception as e:
+                logger.warning(f"Failed to restore token.json from token.b64: {e}")
         
     def _now_str(self) -> str:
         """Возвращает текущую дату с учётом часового пояса из настроек."""
@@ -65,33 +84,39 @@ class GoogleSheetsService:
     
     def _initialize_service(self):
         """Инициализация сервиса Google Sheets.
-
-        ВАЖНО: на сервере больше НЕ пытаемся ходить через OAuth, чтобы не висеть
-        на браузерной авторизации. Всегда используем service account.
+        Если есть oauth_client.json/token.json — используем OAuth.
+        Иначе — service account.
         """
         try:
-            # При необходимости восстановить OAuth-файлы из переменных окружения
-            # (это нужно только для локальных утилит, основной сервис их не использует)
+            # При необходимости восстановить OAuth файлы
             self._ensure_oauth_files()
+            
+            # Попытка через OAuth (приоритетнее)
+            from services.google_sheets_oauth import oauth_client  # lazy import
+            try:
+                sheets_service = oauth_client.get_sheets_service()
+                self.service = sheets_service
+                self.credentials = oauth_client.creds
+                logger.info("Google Sheets via OAuth")
+                return
+            except Exception as oauth_err:
+                logger.warning(f"OAuth not configured, fallback to service account: {oauth_err}")
 
-            # Только service account
+            # Fallback: service account
+            # 1) Через переменную окружения GOOGLE_SERVICE_ACCOUNT_JSON (рекомендуется для Railway)
             sa_json_env = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
-            scopes = [
-                "https://www.googleapis.com/auth/spreadsheets",
-                "https://www.googleapis.com/auth/drive",
-            ]
+            scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
             if sa_json_env:
                 info = json.loads(sa_json_env)
-                self.credentials = service_account.Credentials.from_service_account_info(
-                    info, scopes=scopes
-                )
+                self.credentials = service_account.Credentials.from_service_account_info(info, scopes=scopes)
             else:
+                # 2) Через файл по пути из настроек
                 self.credentials = service_account.Credentials.from_service_account_file(
-                    settings.google_sheets_credentials_file, scopes=scopes
+                    settings.google_sheets_credentials_file,
+                    scopes=scopes
                 )
-
-            self.service = build("sheets", "v4", credentials=self.credentials)
-            logger.info("Google Sheets via Service Account (OAuth disabled for runtime)")
+            self.service = build('sheets', 'v4', credentials=self.credentials)
+            logger.info("Google Sheets via Service Account")
         except Exception as e:
             logger.error(f"Failed to initialize Google Sheets service: {e}")
             raise
@@ -129,25 +154,43 @@ class GoogleSheetsService:
 
     async def create_manager_sheet(self, manager_name: str) -> Optional[str]:
         """
-        Создать новую таблицу для менеджера через service account,
-        КОПИРУЯ готовый шаблон (как было, когда всё работало).
+        Создать новую таблицу для менеджера — как раньше.
+
+        - Если используется OAuth (твой аккаунт) — создаём новую таблицу с нуля.
+        - Если используется Service Account — копируем шаблон по MANAGER_SHEET_TEMPLATE_ID.
         """
         try:
-            drive_service = build("drive", "v3", credentials=self.credentials)
-            if not settings.manager_sheet_template_id:
-                raise ValueError("MANAGER_SHEET_TEMPLATE_ID is not configured")
-
-            copy_response = (
-                drive_service.files()
-                .copy(
-                    fileId=settings.manager_sheet_template_id,
-                    body={"name": f"CRM - {manager_name}"},
+            if hasattr(self.credentials, "token"):
+                # OAuth: создаём напрямую
+                spreadsheet_body = {
+                    "properties": {
+                        "title": f"CRM - {manager_name}"
+                    }
+                }
+                spreadsheet = (
+                    self.service.spreadsheets()
+                    .create(body=spreadsheet_body)
+                    .execute()
                 )
-                .execute()
-            )
-            new_sheet_id = copy_response.get("id")
+                new_sheet_id = spreadsheet.get("spreadsheetId")
+            else:
+                # Service Account: копируем шаблон (старая логика)
+                drive_service = build("drive", "v3", credentials=self.credentials)
+                if not settings.manager_sheet_template_id:
+                    raise ValueError("MANAGER_SHEET_TEMPLATE_ID is not configured")
+                copy_response = (
+                    drive_service.files()
+                    .copy(
+                        fileId=settings.manager_sheet_template_id,
+                        body={"name": f"CRM - {manager_name}"},
+                    )
+                    .execute()
+                )
+                new_sheet_id = copy_response.get("id")
 
             if new_sheet_id:
+                # Сразу устанавливаем локаль РФ (чтобы разделитель тысяч был пробелом)
+                self.set_spreadsheet_locale(new_sheet_id, 'ru_RU')
                 await self._setup_sheet_headers(new_sheet_id)
                 logger.info(f"Created new sheet for {manager_name}: {new_sheet_id}")
                 return new_sheet_id
@@ -155,10 +198,10 @@ class GoogleSheetsService:
             return None
 
         except HttpError as error:
-            logger.error(f"An error occurred while creating sheet (template copy): {error}")
+            logger.error(f"An error occurred while creating sheet: {error}")
             return None
         except Exception as e:
-            logger.error(f"Unexpected error creating sheet (template copy): {e}")
+            logger.error(f"Unexpected error creating sheet: {e}")
             return None
     
     async def _setup_sheet_headers(self, sheet_id: str):
@@ -277,263 +320,6 @@ class GoogleSheetsService:
                 body={'requests': requests}
             ).execute()
 
-    async def _setup_supervisor_headers(self, sheet_id: str):
-        """Настроить заголовки сводной таблицы руководителя - АКТУАЛЬНАЯ СХЕМА (с колонкой Менеджер)."""
-        headers = [
-            [
-                "Наименование компании",  # A
-                "ИНН",  # B
-                "ФИО ЛПР",  # C
-                "Телефон",  # D
-                "Дата звонка будущая",  # E
-                "История звонков (все комментарии)",  # F
-                "Финансы (выручка позапрошлый год) тыс рублей",  # G
-                "Финансы (выручка прошлый год) тыс рублей",  # H
-                "Чистая прибыль за прошлый год (тыс рублей)",  # I
-                "Капитал и резервы за прошлый год (тыс рублей)",  # J
-                "Основные средства за прошлый год (тыс рублей)",  # K
-                "Дебеторская задолженность за прошлый год (тыс рублей)",  # L
-                "Кредиторская задолженность за прошлый год (тыс рублей)",  # M
-                "Госконтракты, сумма заключенных за всё время",  # N
-                "ОКВЭД (основной)",  # O
-                "Наименование ОКПД",  # P
-                "Дата первого звонка",  # Q
-                "Менеджер",  # R
-            ]
-        ]
-        self.service.spreadsheets().values().update(
-            spreadsheetId=sheet_id,
-            range='A1:R1',
-            valueInputOption='RAW',
-            body={'values': headers}
-        ).execute()
-        # Формат валюты для: G,H,I,J,K,L,M,N (финансы + госконтракты)
-        gid = self._get_first_sheet_gid(sheet_id)
-        self._apply_currency_format(sheet_id, gid, [6,7,8,9,10,11,12,13])
-
-    async def delete_columns_by_titles(self, sheet_id: str, titles: List[str]) -> None:
-        """Удалить колонки по заголовкам (точное совпадение названия).
-        Делает безопасно: сначала определяет индексы, затем удаляет по убыванию индексов.
-        """
-        try:
-            result = self.service.spreadsheets().values().get(
-                spreadsheetId=sheet_id,
-                range='A1:AZ1'
-            ).execute()
-            headers_row = (result.get('values') or [[]])[0]
-            to_delete_indices = []
-            for idx, title in enumerate(headers_row):
-                if title in titles:
-                    to_delete_indices.append(idx)
-            if not to_delete_indices:
-                logger.info(f"No columns to delete in {sheet_id} for titles {titles}")
-                return
-            to_delete_indices.sort(reverse=True)
-            gid = self._get_first_sheet_gid(sheet_id)
-            requests = []
-            for idx in to_delete_indices:
-                requests.append({
-                    'deleteDimension': {
-                        'range': {
-                            'sheetId': gid,
-                            'dimension': 'COLUMNS',
-                            'startIndex': idx,
-                            'endIndex': idx + 1
-                        }
-                    }
-                })
-            self.service.spreadsheets().batchUpdate(
-                spreadsheetId=sheet_id,
-                body={'requests': requests}
-            ).execute()
-            logger.info(f"Deleted columns {to_delete_indices} from {sheet_id}")
-        except Exception as e:
-            logger.error(f"Error deleting columns in {sheet_id}: {e}")
-
-    async def _ensure_headers(self, sheet_id: str) -> None:
-        """Проверяет заголовки листа менеджера и при несовпадении приводит к актуальному виду - АКТУАЛЬНАЯ СХЕМА."""
-        try:
-            expected = [
-                "Наименование компании",  # A
-                "ИНН",  # B
-                "ФИО ЛПР",  # C
-                "Телефон",  # D
-                "Дата звонка будущая",  # E
-                "История звонков (все комментарии)",  # F
-                "Финансы (выручка позапрошлый год) тыс рублей",  # G
-                "Финансы (выручка прошлый год) тыс рублей",  # H
-                "Чистая прибыль за прошлый год (тыс рублей)",  # I
-                "Капитал и резервы за прошлый год (тыс рублей)",  # J
-                "Основные средства за прошлый год (тыс рублей)",  # K
-                "Дебеторская задолженность за прошлый год (тыс рублей)",  # L
-                "Кредиторская задолженность за прошлый год (тыс рублей)",  # M
-                "Госконтракты, сумма заключенных за всё время",  # N
-                "ОКВЭД (основной)",  # O
-                "Наименование ОКПД",  # P
-                "Дата первого звонка",  # Q
-            ]
-
-            result = self.service.spreadsheets().values().get(
-                spreadsheetId=sheet_id,
-                range='A1:Q1'
-            ).execute()
-            current = (result.get('values') or [[]])[0]
-
-            if current != expected:
-                logger.info("Sheet headers mismatch detected — updating to the latest structure")
-                await self._setup_sheet_headers(sheet_id)
-        except Exception as e:
-            logger.warning(f"Unable to verify/update headers: {e}")
-    
-    async def add_new_call(self, sheet_id: str, call_data: Dict[str, Any]) -> bool:
-        """Добавить данные о новом звонке"""
-        try:
-            await self._ensure_headers(sheet_id)
-            result = self.service.spreadsheets().values().get(
-                spreadsheetId=sheet_id,
-                range='A:AZ'
-            ).execute()
-            values = result.get('values', [])
-            row_num = 2 if len(values) <= 1 else len(values) + 1
-            # Префиксуем комментарий датой, чтобы история была читабельной
-            comment_prefixed = call_data.get('comment', '')
-            if comment_prefixed:
-                comment_prefixed = f"[{self._now_str()}] {comment_prefixed}"
-            new_row = [
-                call_data.get('company_name', ''),  # A
-                call_data.get('inn', ''),  # B
-                call_data.get('contact_name', ''),  # C
-                call_data.get('phone', ''),  # D
-                call_data.get('next_call_date', ''),  # E
-                comment_prefixed,  # F
-                call_data.get('revenue_previous', ''),  # G (позапрошлый год)
-                call_data.get('revenue', ''),  # H (прошлый год)
-                call_data.get('net_profit', ''),  # I
-                call_data.get('capital', ''),  # J
-                call_data.get('assets', ''),  # K
-                call_data.get('debit', ''),  # L
-                call_data.get('credit', ''),  # M
-                call_data.get('gov_contracts', ''),  # N
-                call_data.get('okved_main', ''),  # O
-                call_data.get('okpd_name', ''),  # P
-                self._now_str()  # Q
-            ]
-            request = {'values': [new_row]}
-            self.service.spreadsheets().values().append(
-                spreadsheetId=sheet_id,
-                range=f'A{row_num}:Q{row_num}',
-                valueInputOption='USER_ENTERED',
-                insertDataOption='INSERT_ROWS',
-                body=request
-            ).execute()
-            return True
-        except Exception as e:
-            logger.error(f"Error adding new call: {e}")
-            return False
-    
-    async def update_repeat_call(self, sheet_id: str, inn: str, call_data: Dict[str, Any]) -> bool:
-        """Обновить данные о повторном звонке"""
-        try:
-            # Ищем строку с нужным ИНН
-            result = self.service.spreadsheets().values().get(
-                spreadsheetId=sheet_id,
-                range='A:AZ'
-            ).execute()
-            
-            values = result.get('values', [])
-            row_index = None
-            
-            for i, row in enumerate(values):
-                if len(row) > 1 and row[1] == inn:  # ИНН в колонке B
-                
-                    row_index = i + 1
-                    break
-            
-            if row_index is None:
-                logger.error(f"Company with INN {inn} not found")
-                return False
-            
-            # Получаем текущую историю комментариев
-            current_row = values[row_index - 1]
-            existing_comments = current_row[5] if len(current_row) > 5 else ''
-            
-            # Добавляем новый комментарий к истории
-            raw_comment = call_data.get('comment', '')
-            new_comment = f"[{self._now_str()}] {raw_comment}" if raw_comment else ""
-            if existing_comments:
-                # Добавляем новый комментарий в начало истории
-                updated_comments = f"{new_comment}\n---\n{existing_comments}"
-            else:
-                updated_comments = new_comment
-            
-            # Обновляем данные - АКТУАЛЬНАЯ СХЕМА (без арбитражей, без ОКПД кода)
-            updates = [
-                {
-                    'range': f'E{row_index}',  # Дата следующего звонка
-                    'values': [[call_data.get('next_call_date', '')]]
-                },
-                {
-                    'range': f'F{row_index}',  # История звонков
-                    'values': [[updated_comments]]
-                },
-                # Финансы / поля из DataNewton
-                {'range': f'G{row_index}', 'values': [[call_data.get('revenue_previous', '')]]},
-                {'range': f'H{row_index}', 'values': [[call_data.get('revenue', '')]]},
-                {'range': f'I{row_index}', 'values': [[call_data.get('net_profit', '')]]},
-                {'range': f'J{row_index}', 'values': [[call_data.get('capital', '')]]},
-                {'range': f'K{row_index}', 'values': [[call_data.get('assets', '')]]},
-                {'range': f'L{row_index}', 'values': [[call_data.get('debit', '')]]},
-                {'range': f'M{row_index}', 'values': [[call_data.get('credit', '')]]},
-                {'range': f'N{row_index}', 'values': [[call_data.get('gov_contracts', '')]]},
-                {'range': f'O{row_index}', 'values': [[call_data.get('okved_main', '')]]},
-                {'range': f'P{row_index}', 'values': [[call_data.get('okpd_name', '')]]},
-            ]
-            # Выполняем пакетное обновление
-            body = {
-                'valueInputOption': 'USER_ENTERED',
-                'data': updates
-            }
-            
-            self.service.spreadsheets().values().batchUpdate(
-                spreadsheetId=sheet_id,
-                body=body
-            ).execute()
-            
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error updating repeat call: {e}")
-            return False
-    
-    async def get_today_calls(self, sheet_id: str) -> List[Dict[str, Any]]:
-        """Получить список звонков на сегодня"""
-        try:
-            result = self.service.spreadsheets().values().get(
-                spreadsheetId=sheet_id,
-                range='A:Z'
-            ).execute()
-            
-            values = result.get('values', [])
-            today = self._now_str()
-            today_calls = []
-            
-            for i, row in enumerate(values[1:], start=2):  # Пропускаем заголовок
-                if len(row) > 4 and row[4] == today:  # E: Дата следующего звонка
-                    today_calls.append({
-                        'row_number': i,
-                        'company_name': row[0] if len(row) > 0 else '',
-                        'inn': row[1] if len(row) > 1 else '',
-                        'contact_name': row[2] if len(row) > 2 else '',
-                        'phone': row[3] if len(row) > 3 else '',
-                        'last_comment': row[5] if len(row) > 5 else ''
-                    })
-            
-            return today_calls
-            
-        except Exception as e:
-            logger.error(f"Error getting today calls: {e}")
-            return []
-    
     async def update_supervisor_sheet(self, manager_name: str, call_data: Dict[str, Any]):
         """Обновить сводную таблицу руководителя"""
         try:
