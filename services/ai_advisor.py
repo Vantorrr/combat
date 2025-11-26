@@ -75,36 +75,54 @@ def calculate_financial_analysis(
     revenue_str: Optional[str],
     capital_str: Optional[str],
     debit_str: Optional[str],
-    credit_str: Optional[str]
+    credit_str: Optional[str],
+    net_profit_str: Optional[str] = None,
+    arbitration_sum_str: Optional[str] = None
 ) -> str:
     """
     Рассчитать финансовые показатели и вернуть текстовый блок с выводами.
     """
-    rev = safe_float(revenue_str)
-    cap = safe_float(capital_str)
-    deb = safe_float(debit_str)
-    cred = safe_float(credit_str)
+    rev = safe_float(revenue_str) # тыс. руб.
+    cap = safe_float(capital_str) # тыс. руб.
+    deb = safe_float(debit_str)   # тыс. руб.
+    cred = safe_float(credit_str) # тыс. руб.
+    net_profit = safe_float(net_profit_str) # тыс. руб.
+    
+    # Арбитражи обычно возвращаются в рублях, а не тысячах.
+    # Если revenue в тысячах, то rev * 1000 = выручка в рублях.
+    arb_sum_rub = safe_float(arbitration_sum_str)
 
     if rev <= 0:
         return "Недостаточно данных по выручке для расчёта фин. показателей."
 
     # 1. Максимальная сумма гарантии = Выручка годовая / 12
-    # Входная выручка в тысячах рублей.
-    # Результат переводим в понятный формат (млн или млрд).
-    # rev (тыс) / 12 = X (тыс).
-    # Если X > 1,000,000 тыс (это 1 млрд), пишем млрд.
-    # Если X > 1,000 тыс (это 1 млн), пишем млн.
     max_guarantee_th = rev / 12
     
+    # ЛОГИКА 1: Если чистая прибыль < 0, лимит режется до 10 млн руб (10,000 тыс)
+    profit_warning = ""
+    if net_profit_str and net_profit < 0:
+        limit_cap_th = 10_000 # 10 млн руб
+        if max_guarantee_th > limit_cap_th:
+            max_guarantee_th = limit_cap_th
+            profit_warning = " (Ограничено до 10 млн ₽ из-за убытка)"
+
+    # Форматирование строки макс гарантии
     if max_guarantee_th >= 1_000_000:
-        mg_str = f"{max_guarantee_th / 1_000_000:.1f} млрд ₽"
+        mg_str = f"{max_guarantee_th / 1_000_000:.1f} млрд ₽{profit_warning}"
     elif max_guarantee_th >= 1_000:
-        mg_str = f"{max_guarantee_th / 1_000:.1f} млн ₽"
+        mg_str = f"{max_guarantee_th / 1_000:.1f} млн ₽{profit_warning}"
     else:
-        mg_str = f"{max_guarantee_th:,.0f} тыс. ₽"
+        mg_str = f"{max_guarantee_th:,.0f} тыс. ₽{profit_warning}"
 
     # 2. Ориентировочный размер лимита = Выручка годовая / 4
     limit_size_th = rev / 4
+    
+    # Применяем то же ограничение по убытку и к лимиту (логично)
+    if net_profit_str and net_profit < 0:
+        limit_cap_th = 10_000
+        if limit_size_th > limit_cap_th:
+            limit_size_th = limit_cap_th
+
     if limit_size_th >= 1_000_000:
         ls_str = f"{limit_size_th / 1_000_000:.1f} млрд ₽"
     elif limit_size_th >= 1_000:
@@ -113,19 +131,13 @@ def calculate_financial_analysis(
         ls_str = f"{limit_size_th:,.0f} тыс. ₽"
 
     # 3. Соотношение дебиторской/кредиторской к выручке
-    # "соотношение дебеторской и кредиторской задолженности отдельно к выручке"
-    # Интерпретация: считаем по отдельности.
     deb_ratio = deb / rev
     cred_ratio = cred / rev
-    
-    # Оценка фин состояния (по худшему показателю или суммарно? Возьмем по худшему из двух для консерватизма)
-    # "если меньше 1-го то отличный показатель, если больше 1,5 то оценка фин состояния = средняя, 
-    # если более 2,5 = фин состояние неудовлетворительное"
     max_debt_ratio = max(deb_ratio, cred_ratio)
     
     if max_debt_ratio < 1.0:
         fin_state = "Отличное"
-    elif max_debt_ratio <= 1.5:  # Уточнение диапазона (1.0 - 1.5 не описано явно, отнесем к норме/среднему)
+    elif max_debt_ratio <= 1.5:
         fin_state = "Среднее (ближе к норме)"
     elif max_debt_ratio <= 2.5:
         fin_state = "Среднее"
@@ -133,25 +145,33 @@ def calculate_financial_analysis(
         fin_state = "Неудовлетворительное"
 
     # 4. Оценка капитала
-    # "Максимальную сумму гарантии расчитанную выше / на капитал"
-    # 0,8-1,2 - норма, < 0,8 - ОТЛИЧНАЯ (капитал велик, покрытие хорошее), > 1,2 - НИЗКАЯ (капитал мал)
     cap_assessment = "Не рассчитано (нет капитала)"
     if cap > 0:
         cap_ratio = max_guarantee_th / cap
         if cap_ratio < 0.8:
-            cap_assessment = "Отличная (капитал значительно превышает требуемую гарантию)"
+            cap_assessment = "Отличная, капитал существенно превышает потенциально возможную сумму гарантии, что говорит о возможном индивидуальном согласовании"
         elif 0.8 <= cap_ratio <= 1.2:
             cap_assessment = "Нормальная"
         else:
-            # > 1.2
             cap_assessment = "Низкая (капитал меньше требуемой гарантии)"
     
+    # ЛОГИКА 2: Арбитражи
+    # Порог = Выручка / 24. Сравниваем в одной валюте (рубли)
+    revenue_rub = rev * 1000
+    arb_threshold = revenue_rub / 24
+    arb_warning = ""
+    
+    if arb_sum_rub > arb_threshold:
+        arb_warning = "\n⚠️ ВНИМАНИЕ: Сумма активных арбитражей высока! Необходимо проверить текущее состояние судебных разбирательств."
+
     # Формируем текст
     lines = []
     lines.append(f"• Макс. сумма гарантии (Выручка/12): {mg_str}")
     lines.append(f"• Ориентировочный лимит (Выручка/4): {ls_str}")
-    lines.append(f"• Долговая нагрузка (Долг/Выручка): Деб={deb_ratio:.2f}, Кред={cred_ratio:.2f}. Оценка: {fin_state}")
-    lines.append(f"• Оценка капитала (Макс.гарантия/Капитал): {cap_assessment}")
+    lines.append(f"• Долговая нагрузка: {fin_state}")
+    lines.append(f"• Оценка капитала: {cap_assessment}")
+    if arb_warning:
+        lines.append(arb_warning)
     
     return "\n".join(lines)
 
@@ -212,7 +232,9 @@ async def generate_ai_notification(
     contact_name_text = contact_name or "Имя ЛПР не указано"
 
     # Расчет финансовых показателей (Python)
-    fin_analysis_text = calculate_financial_analysis(revenue, capital, debit, credit)
+    fin_analysis_text = calculate_financial_analysis(
+        revenue, capital, debit, credit, net_profit, arbitration_open_sum
+    )
 
     # Собираем факты по финансам / госконтрактам / арбитражам в текстовый блок для контекста AI
     metrics_lines: List[str] = []
@@ -262,7 +284,7 @@ async def generate_ai_notification(
         "2. [ПРАЗДНИКИ]: \n"
         "   - Если есть профессиональный праздник отрасли (по ОКВЭД) в пределах +/- 2 дней: укажи его и поздравь.\n"
         "   - ПРОВЕРЬ ИМЕНИНЫ: Если имя ЛПР указано, проверь, есть ли сегодня (или рядом) именины (день ангела) для этого имени. Если есть - напиши об этом.\n"
-        "   - Если отраслевых праздников и именин нет: перечисли 2-3 общероссийских или народных праздника НА СЕГОДНЯШНИЙ ДЕНЬ (из предоставленного списка или общеизвестных), чтобы менеджер мог начать разговор с 'Сегодня же день...'.\n"
+        "   - Если отраслевых праздников и именин нет: НАЙДИ В СВОЕЙ БАЗЕ ЗНАНИЙ 2-3 интересных международных, народных или необычных праздника ИМЕННО НА ЭТУ ДАТУ (например, 'День денежного дерева', 'День сапожника' и т.п.). Задача — дать менеджеру повод для легкого разговора (small talk).\n"
         "3. [ИСТОРИЯ ОБЩЕНИЯ]: Проанализируй историю комментариев менеджера (динамика, обещания, переносы). "
         "Предложи стратегию поведения (давление, выяснение потребностей, пауза).\n"
         "4. [ФИНАНСЫ]: Используй данные из блока 'РАСЧЁТНЫЕ ФИНАНСОВЫЕ ПОКАЗАТЕЛИ'. "
