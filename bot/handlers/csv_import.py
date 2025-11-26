@@ -1,5 +1,6 @@
 import csv
 import io
+import asyncio
 from datetime import datetime
 from typing import List, Dict, Any
 
@@ -210,8 +211,16 @@ async def process_csv_file(message: Message, state: FSMContext, session: AsyncSe
                 # Добавляем в таблицу менеджера
                 await google_sheets_service.add_new_call(sheet_id, call_data)
                 
+                # Задержка 1 секунда между запросами к Google API, чтобы не ловить 429 ошибку
+                # 60 запросов в минуту на пользователя - лимит Google.
+                # Каждая строка это 2-3 запроса (менеджер + сводная + форматирование).
+                await asyncio.sleep(1.5)
+
                 # Добавляем в сводную таблицу
                 await google_sheets_service.update_supervisor_sheet(manager_name, call_data)
+                
+                # Еще одна задержка для безопасности
+                await asyncio.sleep(1.5)
                 
                 success_count += 1
                 
