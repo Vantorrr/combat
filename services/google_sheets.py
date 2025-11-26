@@ -36,40 +36,8 @@ class GoogleSheetsService:
         return [to_letter(start_idx + i) for i in range(count)]
         
     def _ensure_oauth_files(self) -> None:
-        """
-        Восстанавливаем OAuth файлы из переменных окружения ИЛИ из base64-файлов, 
-        которые мы положим в репозиторий (обходя секрет-сканнер).
-        """
-        client_b64 = os.getenv("GOOGLE_OAUTH_CLIENT_JSON_B64")
-        token_b64_env = os.getenv("GOOGLE_OAUTH_TOKEN_JSON_B64")
-        
-        # 1. Пробуем восстановить oauth_client.json
-        if client_b64:
-            try:
-                Path("oauth_client.json").write_bytes(base64.b64decode(client_b64))
-            except Exception as e:
-                logger.warning(f"Failed to decode GOOGLE_OAUTH_CLIENT_JSON_B64: {e}")
-        
-        # 2. Пробуем восстановить token.json
-        # Сначала из env
-        if token_b64_env:
-            try:
-                Path("token.json").write_bytes(base64.b64decode(token_b64_env))
-            except Exception as e:
-                logger.warning(f"Failed to decode GOOGLE_OAUTH_TOKEN_JSON_B64: {e}")
-        # Если в env нет, ищем локальный token.b64 (который мы закоммитим)
-        elif os.path.exists("token.b64"):
-            try:
-                token_data = Path("token.b64").read_bytes()
-                # token.b64 уже содержит base64 строку, нам нужно её декодировать в JSON
-                # (команда base64 -i ... > token.b64 создает файл с b64-контентом)
-                # Но `base64` утилита может добавлять переносы строк.
-                # Читаем как текст, убираем пробелы/переносы.
-                b64_str = token_data.decode("utf-8").strip().replace("\n", "")
-                Path("token.json").write_bytes(base64.b64decode(b64_str))
-                logger.info("Restored token.json from token.b64 file")
-            except Exception as e:
-                logger.warning(f"Failed to restore token.json from token.b64: {e}")
+        """Если переданы OAuth файлы через переменные окружения, восстанавливаем их на диск."""
+        pass  # OAuth больше не используем в рантайме, чтобы не зависеть от локальных токенов
         
     def _now_str(self) -> str:
         """Возвращает текущую дату с учётом часового пояса из настроек."""
@@ -84,39 +52,22 @@ class GoogleSheetsService:
     
     def _initialize_service(self):
         """Инициализация сервиса Google Sheets.
-        Если есть oauth_client.json/token.json — используем OAuth.
-        Иначе — service account.
+        Всегда используем Service Account.
         """
         try:
-            # При необходимости восстановить OAuth файлы
-            self._ensure_oauth_files()
-            
-            # Попытка через OAuth (приоритетнее)
-            from services.google_sheets_oauth import oauth_client  # lazy import
-            try:
-                sheets_service = oauth_client.get_sheets_service()
-                self.service = sheets_service
-                self.credentials = oauth_client.creds
-                logger.info("Google Sheets via OAuth")
-                return
-            except Exception as oauth_err:
-                logger.warning(f"OAuth not configured, fallback to service account: {oauth_err}")
-
-            # Fallback: service account
-            # 1) Через переменную окружения GOOGLE_SERVICE_ACCOUNT_JSON (рекомендуется для Railway)
+            # Service account
             sa_json_env = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
             scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
             if sa_json_env:
                 info = json.loads(sa_json_env)
                 self.credentials = service_account.Credentials.from_service_account_info(info, scopes=scopes)
             else:
-                # 2) Через файл по пути из настроек
                 self.credentials = service_account.Credentials.from_service_account_file(
                     settings.google_sheets_credentials_file,
                     scopes=scopes
                 )
             self.service = build('sheets', 'v4', credentials=self.credentials)
-            logger.info("Google Sheets via Service Account")
+            logger.info("Google Sheets via Service Account (Clean creation mode)")
         except Exception as e:
             logger.error(f"Failed to initialize Google Sheets service: {e}")
             raise
@@ -154,49 +105,51 @@ class GoogleSheetsService:
 
     async def create_manager_sheet(self, manager_name: str) -> Optional[str]:
         """
-        Создать новую таблицу для менеджера — как раньше.
-
-        - Если используется OAuth (твой аккаунт) — создаём новую таблицу с нуля.
-        - Если используется Service Account — копируем шаблон по MANAGER_SHEET_TEMPLATE_ID.
+        Создать новую таблицу для менеджера.
+        Используем создание с нуля (не копирование), чтобы обойти квоту хранилища Service Account.
         """
         try:
-            if hasattr(self.credentials, "token"):
-                # OAuth: создаём напрямую
-                spreadsheet_body = {
-                    "properties": {
-                        "title": f"CRM - {manager_name}"
-                    }
+            # 1. Создаем пустую таблицу
+            spreadsheet_body = {
+                'properties': {
+                    'title': f'CRM - {manager_name}'
                 }
-                spreadsheet = (
-                    self.service.spreadsheets()
-                    .create(body=spreadsheet_body)
-                    .execute()
-                )
-                new_sheet_id = spreadsheet.get("spreadsheetId")
-            else:
-                # Service Account: копируем шаблон (старая логика)
-                drive_service = build("drive", "v3", credentials=self.credentials)
-                if not settings.manager_sheet_template_id:
-                    raise ValueError("MANAGER_SHEET_TEMPLATE_ID is not configured")
-                copy_response = (
-                    drive_service.files()
-                    .copy(
-                        fileId=settings.manager_sheet_template_id,
-                        body={"name": f"CRM - {manager_name}"},
-                    )
-                    .execute()
-                )
-                new_sheet_id = copy_response.get("id")
+            }
+            
+            spreadsheet = self.service.spreadsheets().create(
+                body=spreadsheet_body
+            ).execute()
+            
+            new_sheet_id = spreadsheet.get('spreadsheetId')
+            
+            if not new_sheet_id:
+                raise RuntimeError("Failed to obtain new sheet ID")
+            
+            logger.info(f"Created new sheet for {manager_name}: {new_sheet_id}")
 
-            if new_sheet_id:
-                # Сразу устанавливаем локаль РФ (чтобы разделитель тысяч был пробелом)
-                self.set_spreadsheet_locale(new_sheet_id, 'ru_RU')
-                await self._setup_sheet_headers(new_sheet_id)
-                logger.info(f"Created new sheet for {manager_name}: {new_sheet_id}")
-                return new_sheet_id
+            # 2. Даем доступ (Share to anyone with link as Editor)
+            # Чтобы ты мог открыть таблицу, созданную сервисным аккаунтом.
+            try:
+                drive_service = build('drive', 'v3', credentials=self.credentials)
+                permission = {
+                    'type': 'anyone',
+                    'role': 'writer'
+                }
+                drive_service.permissions().create(
+                    fileId=new_sheet_id,
+                    body=permission,
+                    fields='id'
+                ).execute()
+                logger.info(f"Shared sheet {new_sheet_id} with anyone (writer)")
+            except Exception as e:
+                logger.error(f"Failed to share sheet: {e}")
 
-            return None
-
+            # 3. Настраиваем локаль и заголовки
+            self.set_spreadsheet_locale(new_sheet_id, 'ru_RU')
+            await self._setup_sheet_headers(new_sheet_id)
+            
+            return new_sheet_id
+            
         except HttpError as error:
             logger.error(f"An error occurred while creating sheet: {error}")
             return None
