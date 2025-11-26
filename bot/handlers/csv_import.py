@@ -40,6 +40,103 @@ def _format_imported_comments(row):
     return "\n---\n".join(comments) if comments else ""
 
 
+async def import_csv_task(data_rows, manager_name, sheet_id, bot, chat_id):
+    """
+    Фоновая задача для построчного импорта CSV.
+    """
+    google_sheets_service = get_google_sheets_service()
+    success_count = 0
+    error_count = 0
+    
+    logger.info(f"Background CSV import started for {manager_name} ({len(data_rows)} rows)")
+
+    for i, row in enumerate(data_rows, 1):
+        try:
+            # Минимум 7 колонок
+            if len(row) < 7:
+                logger.warning(f"Row {i} has less than 7 columns: {row}")
+                error_count += 1
+                continue
+            
+            # Подготавливаем базовые данные
+            inn = row[1].strip()
+            company_name = row[0].strip()
+            
+            # Пробуем обогатить данные через API (финансы, ОКВЭД и т.д.)
+            # Это может занять время, но зато таблица будет полной.
+            company_api_data = {}
+            if inn:
+                try:
+                    # Задержка перед запросом к API, чтобы не ловить 429
+                    await asyncio.sleep(0.5)
+                    api_result = await datanewton_api.get_full_company_data(inn)
+                    if api_result:
+                        company_api_data = api_result
+                except Exception as e:
+                    logger.warning(f"Failed to fetch API data for INN {inn}: {e}")
+
+            call_data = {
+                'company_name': company_api_data.get('name') or company_name,
+                'inn': inn,
+                'contact_name': row[2].strip() if len(row) > 2 else '',
+                'phone': row[3].strip() if len(row) > 3 else '',
+                'first_call_date': row[4].strip() if len(row) > 4 else datetime.now().strftime('%d.%m.%y'),
+                'next_call_date': row[5].strip() if len(row) > 5 else '',
+                'comment': _format_imported_comments(row),
+                # Данные из API (если есть) или из CSV (если API не вернул)
+                'revenue': str(company_api_data.get('revenue', '')) or (row[9].strip() if len(row) > 9 else ''),
+                'revenue_previous': str(company_api_data.get('revenue_previous', '')) or (row[10].strip() if len(row) > 10 else ''),
+                'capital': str(company_api_data.get('capital', '')) or (row[11].strip() if len(row) > 11 else ''),
+                'assets': str(company_api_data.get('assets', '')) or (row[12].strip() if len(row) > 12 else ''),
+                'debit': str(company_api_data.get('debit', '')) or (row[13].strip() if len(row) > 13 else ''),
+                'credit': str(company_api_data.get('credit', '')) or (row[14].strip() if len(row) > 14 else ''),
+                'net_profit': str(company_api_data.get('net_profit', '')), # Чистая прибыль только из API
+                'gov_contracts': str(company_api_data.get('gov_contracts', '')) or (row[18].strip() if len(row) > 18 else ''),
+                'okved_main': str(company_api_data.get('okved', '')) or (row[17].strip() if len(row) > 17 else ''),
+                'okpd_name': str(company_api_data.get('okpd_name', '')), # ОКПД только из API
+            }
+            
+            # Добавляем в таблицу менеджера
+            await google_sheets_service.add_new_call(sheet_id, call_data)
+            
+            # Задержка 1 секунда между запросами к Google API, чтобы не ловить 429 ошибку
+            await asyncio.sleep(1.5)
+
+            # Добавляем в сводную таблицу
+            await google_sheets_service.update_supervisor_sheet(manager_name, call_data)
+            
+            # Еще одна задержка для безопасности
+            await asyncio.sleep(1.5)
+            
+            success_count += 1
+            
+        except Exception as e:
+            logger.error(f"Error processing row {i}: {e}")
+            error_count += 1
+            
+    # Отправляем результат в чат
+    result_message = (
+        f"✅ *Импорт завершен (фоновая задача)!*\n\n"
+        f"Менеджер: {manager_name}\n"
+        f"Успешно импортировано: {success_count} записей\n"
+    )
+    
+    if error_count > 0:
+        result_message += f"Ошибок: {error_count} записей\n"
+    
+    result_message += f"\n[Открыть таблицу менеджера](https://docs.google.com/spreadsheets/d/{sheet_id})"
+    
+    try:
+        await bot.send_message(
+            chat_id=chat_id,
+            text=result_message,
+            parse_mode="Markdown",
+            disable_web_page_preview=True
+        )
+    except Exception as e:
+        logger.error(f"Failed to send import completion message: {e}")
+
+
 @router.callback_query(F.data == "import_csv")
 async def start_csv_import(callback: CallbackQuery, state: FSMContext, session: AsyncSession):
     """Начать процесс импорта CSV"""
@@ -130,7 +227,7 @@ async def process_csv_file(message: Message, state: FSMContext, session: AsyncSe
         )
         return
     
-    await message.answer("⏳ Обрабатываю файл...")
+    await message.answer("⏳ Скачиваю и читаю файл...")
     
     try:
         # Скачиваем файл
@@ -172,100 +269,31 @@ async def process_csv_file(message: Message, state: FSMContext, session: AsyncSe
             await state.clear()
             return
         
-        # Обрабатываем строки
-        google_sheets_service = get_google_sheets_service()
-        success_count = 0
-        error_count = 0
-        
-        for i, row in enumerate(data_rows, 1):
-            try:
-                # Минимум 7 колонок
-                if len(row) < 7:
-                    logger.warning(f"Row {i} has less than 7 columns: {row}")
-                    error_count += 1
-                    continue
-                
-                # Подготавливаем базовые данные
-                inn = row[1].strip()
-                company_name = row[0].strip()
-                
-                # Пробуем обогатить данные через API (финансы, ОКВЭД и т.д.)
-                # Это может занять время, но зато таблица будет полной.
-                company_api_data = {}
-                if inn:
-                    try:
-                        # Задержка перед запросом к API, чтобы не ловить 429
-                        await asyncio.sleep(0.5)
-                        api_result = await datanewton_api.get_full_company_data(inn)
-                        if api_result:
-                            company_api_data = api_result
-                    except Exception as e:
-                        logger.warning(f"Failed to fetch API data for INN {inn}: {e}")
-
-                call_data = {
-                    'company_name': company_api_data.get('name') or company_name,
-                    'inn': inn,
-                    'contact_name': row[2].strip() if len(row) > 2 else '',
-                    'phone': row[3].strip() if len(row) > 3 else '',
-                    'first_call_date': row[4].strip() if len(row) > 4 else datetime.now().strftime('%d.%m.%y'),
-                    'next_call_date': row[5].strip() if len(row) > 5 else '',
-                    'comment': _format_imported_comments(row),
-                    # Данные из API (если есть) или из CSV (если API не вернул)
-                    'revenue': str(company_api_data.get('revenue', '')) or (row[9].strip() if len(row) > 9 else ''),
-                    'revenue_previous': str(company_api_data.get('revenue_previous', '')) or (row[10].strip() if len(row) > 10 else ''),
-                    'capital': str(company_api_data.get('capital', '')) or (row[11].strip() if len(row) > 11 else ''),
-                    'assets': str(company_api_data.get('assets', '')) or (row[12].strip() if len(row) > 12 else ''),
-                    'debit': str(company_api_data.get('debit', '')) or (row[13].strip() if len(row) > 13 else ''),
-                    'credit': str(company_api_data.get('credit', '')) or (row[14].strip() if len(row) > 14 else ''),
-                    'net_profit': str(company_api_data.get('net_profit', '')), # Чистая прибыль только из API
-                    'gov_contracts': str(company_api_data.get('gov_contracts', '')) or (row[18].strip() if len(row) > 18 else ''),
-                    'okved_main': str(company_api_data.get('okved', '')) or (row[17].strip() if len(row) > 17 else ''),
-                    'okpd_name': str(company_api_data.get('okpd_name', '')), # ОКПД только из API
-                }
-                
-                # Добавляем в таблицу менеджера
-                await google_sheets_service.add_new_call(sheet_id, call_data)
-                
-                # Задержка 1 секунда между запросами к Google API, чтобы не ловить 429 ошибку
-                # 60 запросов в минуту на пользователя - лимит Google.
-                # Каждая строка это 2-3 запроса (менеджер + сводная + форматирование).
-                await asyncio.sleep(1.5)
-
-                # Добавляем в сводную таблицу
-                await google_sheets_service.update_supervisor_sheet(manager_name, call_data)
-                
-                # Еще одна задержка для безопасности
-                await asyncio.sleep(1.5)
-                
-                success_count += 1
-                
-            except Exception as e:
-                logger.error(f"Error processing row {i}: {e}")
-                error_count += 1
-        
-        # Отправляем результат
-        result_message = (
-            f"✅ *Импорт завершен!*\n\n"
-            f"Менеджер: {manager_name}\n"
-            f"Успешно импортировано: {success_count} записей\n"
+        # Запускаем фоновую задачу
+        asyncio.create_task(
+            import_csv_task(
+                data_rows=data_rows, 
+                manager_name=manager_name, 
+                sheet_id=sheet_id,
+                bot=message.bot,
+                chat_id=message.chat.id
+            )
         )
         
-        if error_count > 0:
-            result_message += f"Ошибок: {error_count} записей\n"
-        
-        result_message += f"\n[Открыть таблицу менеджера](https://docs.google.com/spreadsheets/d/{sheet_id})"
-        
+        # Сразу отвечаем пользователю
         await message.answer(
-            result_message,
+            f"✅ *Импорт запущен в фоновом режиме!* (строк: {len(data_rows)})\n\n"
+            "⏳ Это займет время (примерно 3-5 секунд на строку, чтобы заполнить все данные).\n"
+            "🔔 Я пришлю уведомление, когда закончу.\n"
+            "Вы можете продолжать пользоваться ботом.",
             parse_mode="Markdown",
-            reply_markup=get_admin_menu(),
-            disable_web_page_preview=True
+            reply_markup=get_admin_menu()
         )
         
     except Exception as e:
-        logger.error(f"Error processing CSV: {e}")
+        logger.error(f"Error preparing CSV import: {e}")
         await message.answer(
-            f"❌ Ошибка при обработке файла:\n{str(e)}",
+            f"❌ Ошибка при чтении файла:\n{str(e)}",
             reply_markup=get_admin_menu()
         )
     
