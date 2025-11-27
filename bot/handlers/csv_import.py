@@ -80,20 +80,50 @@ async def import_csv_task(data_rows, manager_name, sheet_id, bot, chat_id):
                 'inn': inn,
                 'contact_name': row[2].strip() if len(row) > 2 else '',
                 'phone': row[3].strip() if len(row) > 3 else '',
-                'first_call_date': row[4].strip() if len(row) > 4 and row[4].strip() else datetime.now().strftime('%d.%m.%y'),
-                'next_call_date': row[5].strip() if len(row) > 5 else '',
+                # ЛОГИКА ДАТЫ ПЕРВОГО ЗВОНКА:
+                # 1. Проверяем колонку 16 (Q) - как в экспорте из Google Sheets
+                # 2. Проверяем колонку 4 (E) - как в инструкции бота (хотя там часто "Дата след. звонка")
+                # 3. Если ничего нет - ставим сегодня
+                'first_call_date': (
+                    row[16].strip() if len(row) > 16 and row[16].strip() else (
+                        row[4].strip() if len(row) > 4 and row[4].strip() else datetime.now().strftime('%d.%m.%y')
+                    )
+                ),
+                'next_call_date': row[4].strip() if len(row) > 4 else '', # В экспорте Google Sheets дата след. звонка обычно в E (index 4)
                 'comment': _format_imported_comments(row),
-                # Данные из API (если есть) или из CSV (если API не вернул)
-                'revenue': str(company_api_data.get('revenue') or (row[9].strip() if len(row) > 9 else '')),
-                'revenue_previous': str(company_api_data.get('revenue_previous') or (row[10].strip() if len(row) > 10 else '')),
-                'capital': str(company_api_data.get('capital') or (row[11].strip() if len(row) > 11 else '')),
-                'assets': str(company_api_data.get('assets') or (row[12].strip() if len(row) > 12 else '')),
-                'debit': str(company_api_data.get('debit') or (row[13].strip() if len(row) > 13 else '')),
-                'credit': str(company_api_data.get('credit') or (row[14].strip() if len(row) > 14 else '')),
-                'net_profit': str(company_api_data.get('net_profit') or ''), # Чистая прибыль только из API
-                'gov_contracts': str(company_api_data.get('gov_contracts') or (row[18].strip() if len(row) > 18 else '')),
-                'okved_main': str(company_api_data.get('okved') or (row[17].strip() if len(row) > 17 else '')),
-                'okpd_name': str(company_api_data.get('okpd_name') or ''), # ОКПД только из API
+                
+                # ЛОГИКА ФИНАНСОВ И ГОСКОНТРАКТОВ:
+                # Приоритет: 1. API -> 2. Экспорт из Google Sheets (индексы 6-13) -> 3. Старая схема (индексы 9-18)
+                
+                'revenue': str(company_api_data.get('revenue') or 
+                               (row[7].strip() if len(row) > 7 and len(row) > 15 else (row[9].strip() if len(row) > 9 else ''))),
+                               
+                'revenue_previous': str(company_api_data.get('revenue_previous') or 
+                                        (row[6].strip() if len(row) > 6 and len(row) > 15 else (row[10].strip() if len(row) > 10 else ''))),
+                                        
+                'capital': str(company_api_data.get('capital') or 
+                               (row[9].strip() if len(row) > 9 and len(row) > 15 else (row[11].strip() if len(row) > 11 else ''))),
+                               
+                'assets': str(company_api_data.get('assets') or 
+                              (row[10].strip() if len(row) > 10 and len(row) > 15 else (row[12].strip() if len(row) > 12 else ''))),
+                              
+                'debit': str(company_api_data.get('debit') or 
+                             (row[11].strip() if len(row) > 11 and len(row) > 15 else (row[13].strip() if len(row) > 13 else ''))),
+                             
+                'credit': str(company_api_data.get('credit') or 
+                              (row[12].strip() if len(row) > 12 and len(row) > 15 else (row[14].strip() if len(row) > 14 else ''))),
+                              
+                'net_profit': str(company_api_data.get('net_profit') or 
+                                  (row[8].strip() if len(row) > 8 and len(row) > 15 else '')),
+                                  
+                'gov_contracts': str(company_api_data.get('gov_contracts') or 
+                                     (row[13].strip() if len(row) > 13 and len(row) > 15 else (row[18].strip() if len(row) > 18 else ''))),
+                                     
+                'okved_main': str(company_api_data.get('okved') or 
+                                  (row[14].strip() if len(row) > 14 and len(row) > 15 else (row[17].strip() if len(row) > 17 else ''))),
+                                  
+                'okpd_name': str(company_api_data.get('okpd_name') or 
+                                 (row[15].strip() if len(row) > 15 and len(row) > 15 else '')),
             }
             
             # Добавляем в таблицу менеджера
