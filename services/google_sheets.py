@@ -589,7 +589,8 @@ class GoogleSheetsService:
             else:
                 updated_comments = new_comment
 
-            # Обновляем данные - АКТУАЛЬНАЯ СХЕМА (без арбитражей, без ОКПД кода)
+            # Обновляем данные - АКТУАЛЬНАЯ СХЕМА
+            # УБРАЛИ обновление финансов отсюда, чтобы не стирать их, если данных нет в call_data
             updates = [
                 {
                     'range': f'E{row_index}',  # Дата следующего звонка
@@ -598,19 +599,12 @@ class GoogleSheetsService:
                 {
                     'range': f'F{row_index}',  # История звонков
                     'values': [[updated_comments]]
-                },
-                # Финансы / поля из DataNewton
-                {'range': f'G{row_index}', 'values': [[call_data.get('revenue_previous', '')]]},
-                {'range': f'H{row_index}', 'values': [[call_data.get('revenue', '')]]},
-                {'range': f'I{row_index}', 'values': [[call_data.get('net_profit', '')]]},
-                {'range': f'J{row_index}', 'values': [[call_data.get('capital', '')]]},
-                {'range': f'K{row_index}', 'values': [[call_data.get('assets', '')]]},
-                {'range': f'L{row_index}', 'values': [[call_data.get('debit', '')]]},
-                {'range': f'M{row_index}', 'values': [[call_data.get('credit', '')]]},
-                {'range': f'N{row_index}', 'values': [[call_data.get('gov_contracts', '')]]},
-                {'range': f'O{row_index}', 'values': [[call_data.get('okved_main', '')]]},
-                {'range': f'P{row_index}', 'values': [[call_data.get('okpd_name', '')]]},
+                }
             ]
+            
+            # Если в call_data ЕСТЬ финансовые данные (не пустые) - добавляем их в обновление
+            # Но обычно update_repeat_call вызывается без них, а финансы обновляются отдельно через update_specific_columns
+            # Поэтому здесь оставим только E и F, чтобы гарантированно не затереть G-P.
 
             body = {
                 'valueInputOption': 'USER_ENTERED',
@@ -624,34 +618,12 @@ class GoogleSheetsService:
 
             # Принудительно обновляем формат валюты для измененной строки
             # G(6) - N(13)
-            gid = self._get_first_sheet_gid(sheet_id)
-            requests = []
-            for col_idx in range(6, 14):
-                requests.append({
-                    'repeatCell': {
-                        'range': {
-                            'sheetId': gid,
-                            'startRowIndex': row_index - 1,
-                            'endRowIndex': row_index,
-                            'startColumnIndex': col_idx,
-                            'endColumnIndex': col_idx + 1
-                        },
-                        'cell': {
-                            'userEnteredFormat': {
-                                'numberFormat': {
-                                    'type': 'CURRENCY',
-                                    'pattern': '#,##0" ₽"'
-                                }
-                            }
-                        },
-                        'fields': 'userEnteredFormat.numberFormat'
-                    }
-                })
-            
-            self.service.spreadsheets().batchUpdate(
-                spreadsheetId=sheet_id,
-                body={'requests': requests}
-            ).execute()
+            # УБРАЛИ: раз мы не трогаем финансы, то и формат переприменять не обязательно
+            # (если только мы не хотим починить формат, но это лучше делать при явной записи)
+            # gid = self._get_first_sheet_gid(sheet_id)
+            # requests = []
+            # for col_idx in range(6, 14):
+            # ... (код скрыт)
 
             return True
 
