@@ -41,6 +41,30 @@ def _format_imported_comments(row):
     return "\n---\n".join(comments) if comments else ""
 
 
+async def get_data_with_retry(inn, max_retries=5):
+    """Получение данных из API с повторными попытками при 429/ошибках"""
+    for attempt in range(max_retries):
+        try:
+            # Небольшая задержка перед запросом
+            await asyncio.sleep(0.5) 
+            
+            data = await datanewton_api.get_full_company_data(inn)
+            
+            # Если данные получены (даже если пустой словарь, но не None)
+            if data is not None:
+                return data
+            
+        except Exception as e:
+            logger.warning(f"Attempt {attempt+1}/{max_retries} failed for INN {inn}: {e}")
+        
+        # Если это не последняя попытка, ждем с экспоненциальной задержкой
+        if attempt < max_retries - 1:
+            wait_time = (2 ** attempt) + random.uniform(0, 1)
+            await asyncio.sleep(wait_time)
+            
+    return {}
+
+
 async def import_csv_task(data_rows, manager_name, sheet_id, bot, chat_id):
     """
     Фоновая задача для построчного импорта CSV с защитой от Rate Limit.
@@ -66,16 +90,9 @@ async def import_csv_task(data_rows, manager_name, sheet_id, bot, chat_id):
             # Пробуем обогатить данные через API (финансы, ОКВЭД и т.д.)
             company_api_data = {}
             if inn:
-                try:
-                    # Задержка перед запросом к API
-                    await asyncio.sleep(0.5)
-                    api_result = await datanewton_api.get_full_company_data(inn)
-                    if api_result:
-                        company_api_data = api_result
-                except Exception as e:
-                    logger.warning(f"Failed to fetch API data for INN {inn}: {e}")
+                company_api_data = await get_data_with_retry(inn)
 
-            # Логика извлечения из CSV для отладки (оставим как есть)
+            # Логика извлечения из CSV для отладки
             # csv_gov = (row[13].strip() if len(row) > 13 and len(row) > 15 else (row[18].strip() if len(row) > 18 else 'NONE'))
             # csv_okpd_name = (row[15].strip() if len(row) > 15 and len(row) > 15 else 'NONE')
 
@@ -85,20 +102,15 @@ async def import_csv_task(data_rows, manager_name, sheet_id, bot, chat_id):
                 'contact_name': row[2].strip() if len(row) > 2 else '',
                 'phone': row[3].strip() if len(row) > 3 else '',
                 # ЛОГИКА ДАТЫ ПЕРВОГО ЗВОНКА:
-                # 1. Проверяем колонку 16 (Q) - как в экспорте из Google Sheets
-                # 2. Проверяем колонку 4 (E) - как в инструкции бота (хотя там часто "Дата след. звонка")
-                # 3. Если ничего нет - ставим сегодня
                 'first_call_date': (
                     row[16].strip() if len(row) > 16 and row[16].strip() else (
                         row[4].strip() if len(row) > 4 and row[4].strip() else datetime.now().strftime('%d.%m.%y')
                     )
                 ),
-                'next_call_date': row[4].strip() if len(row) > 4 else '', # В экспорте Google Sheets дата след. звонка обычно в E (index 4)
+                'next_call_date': row[4].strip() if len(row) > 4 else '', 
                 'comment': _format_imported_comments(row),
                 
                 # ЛОГИКА ФИНАНСОВ И ГОСКОНТРАКТОВ:
-                # Приоритет: 1. API -> 2. Экспорт из Google Sheets (индексы 6-13) -> 3. Старая схема (индексы 9-18)
-                
                 'revenue': str(company_api_data.get('revenue') or 
                                (row[7].strip() if len(row) > 7 and len(row) > 15 else (row[9].strip() if len(row) > 9 else ''))),
                                
@@ -133,14 +145,14 @@ async def import_csv_task(data_rows, manager_name, sheet_id, bot, chat_id):
             # Добавляем в таблицу менеджера
             await google_sheets_service.add_new_call(sheet_id, call_data)
             
-            # Задержка 1 секунда между запросами к Google API, чтобы не ловить 429 ошибку
-            await asyncio.sleep(1.5)
+            # Задержка (теперь меньше, так как есть retry внутри get_data_with_retry)
+            await asyncio.sleep(0.5)
 
             # Добавляем в сводную таблицу
             await google_sheets_service.update_supervisor_sheet(manager_name, call_data)
             
             # Еще одна задержка для безопасности
-            await asyncio.sleep(1.5)
+            await asyncio.sleep(0.5)
             
             success_count += 1
             
@@ -317,7 +329,7 @@ async def process_csv_file(message: Message, state: FSMContext, session: AsyncSe
         # Сразу отвечаем пользователю
         await message.answer(
             f"✅ *Импорт запущен в фоновом режиме!* (строк: {len(data_rows)})\n\n"
-            "⏳ Это займет время (примерно 3-5 секунд на строку, чтобы заполнить все данные).\n"
+            "⏳ Это займет время (примерно 2-3 секунды на строку).\n"
             "🔔 Я пришлю уведомление, когда закончу.\n"
             "Вы можете продолжать пользоваться ботом.",
             parse_mode="Markdown",
