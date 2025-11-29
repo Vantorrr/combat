@@ -265,23 +265,24 @@ class GoogleSheetsService:
         }
         
         # Скрываем финансовые/служебные колонки по умолчанию (не меняем индексы)
-        hidden_columns = list(range(6, 12)) + list(range(12, 17))
-        first_gid = self._get_first_sheet_gid(sheet_id)
-        for col_index in hidden_columns:
-            format_request['requests'].append({
-                'updateDimensionProperties': {
-                    'range': {
-                        'sheetId': first_gid,
-                        'dimension': 'COLUMNS',
-                        'startIndex': col_index,
-                        'endIndex': col_index + 1
-                    },
-                    'properties': {
-                        'hiddenByUser': True
-                    },
-                    'fields': 'hiddenByUser'
-                }
-            })
+        # ОТКЛЮЧЕНО ПО ПРОСЬБЕ ПОЛЬЗОВАТЕЛЯ (чтобы данные не "пропадали")
+        # hidden_columns = list(range(6, 12)) + list(range(12, 17))
+        # first_gid = self._get_first_sheet_gid(sheet_id)
+        # for col_index in hidden_columns:
+        #     format_request['requests'].append({
+        #         'updateDimensionProperties': {
+        #             'range': {
+        #                 'sheetId': first_gid,
+        #                 'dimension': 'COLUMNS',
+        #                 'startIndex': col_index,
+        #                 'endIndex': col_index + 1
+        #             },
+        #             'properties': {
+        #                 'hiddenByUser': True
+        #             },
+        #             'fields': 'hiddenByUser'
+        #         }
+        #     })
         
         self.service.spreadsheets().batchUpdate(
             spreadsheetId=sheet_id,
