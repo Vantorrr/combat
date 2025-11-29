@@ -1,3 +1,5 @@
+import csv
+import io
 import asyncio
 import random
 from datetime import datetime
