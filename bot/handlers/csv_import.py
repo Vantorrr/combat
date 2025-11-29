@@ -1,6 +1,5 @@
-import csv
-import io
 import asyncio
+import random
 from datetime import datetime
 from typing import List, Dict, Any
 
@@ -42,7 +41,7 @@ def _format_imported_comments(row):
 
 async def import_csv_task(data_rows, manager_name, sheet_id, bot, chat_id):
     """
-    Фоновая задача для построчного импорта CSV.
+    Фоновая задача для построчного импорта CSV с защитой от Rate Limit.
     """
     google_sheets_service = get_google_sheets_service()
     success_count = 0
@@ -62,26 +61,37 @@ async def import_csv_task(data_rows, manager_name, sheet_id, bot, chat_id):
             inn = row[1].strip()
             company_name = row[0].strip()
             
-            # Пробуем обогатить данные через API (финансы, ОКВЭД и т.д.)
+            # Пробуем обогатить данные через API (с повторами при ошибках/429)
             company_api_data = {}
             if inn:
-                try:
-                    # Задержка перед запросом к API
-                    await asyncio.sleep(0.5)
-                    api_result = await datanewton_api.get_full_company_data(inn)
-                    if api_result:
-                        company_api_data = api_result
-                        # --- DEBUG LOGGING ---
-                        logger.info(f"API Data for {inn}: Gov={api_result.get('gov_contracts')}, OKPD={api_result.get('okpd')}, OKPD_Name={api_result.get('okpd_name')}")
-                    else:
-                         logger.warning(f"API returned None for {inn}")
-                except Exception as e:
-                    logger.warning(f"Failed to fetch API data for INN {inn}: {e}")
+                max_retries = 5
+                for attempt in range(max_retries):
+                    try:
+                        # Задержка перед запросом к API (плавающая)
+                        await asyncio.sleep(0.6 + random.uniform(0, 0.4))
+                        
+                        api_result = await datanewton_api.get_full_company_data(inn)
+                        
+                        if api_result:
+                            company_api_data = api_result
+                            break # Успех
+                        else:
+                            # Если API вернул пустоту (возможно ошибка), пробуем retry
+                            if attempt < max_retries - 1:
+                                raise ValueError("API returned None")
+                            
+                    except Exception as e:
+                        if attempt < max_retries - 1:
+                            wait_time = (2 ** attempt) + random.uniform(0, 1)
+                            logger.warning(f"Retry {attempt+1}/{max_retries} for INN {inn}: {e}. Wait {wait_time:.1f}s")
+                            await asyncio.sleep(wait_time)
+                        else:
+                            logger.error(f"Max retries reached for INN {inn}")
 
             # Логика извлечения из CSV для отладки
             csv_gov = (row[13].strip() if len(row) > 13 and len(row) > 15 else (row[18].strip() if len(row) > 18 else 'NONE'))
             csv_okpd_name = (row[15].strip() if len(row) > 15 and len(row) > 15 else 'NONE')
-            logger.info(f"CSV Fallback for {inn}: Gov={csv_gov}, OKPD_Name={csv_okpd_name}")
+            # logger.info(f"CSV Fallback for {inn}: Gov={csv_gov}, OKPD_Name={csv_okpd_name}") 
 
             call_data = {
                 'company_name': company_api_data.get('name') or company_name,
