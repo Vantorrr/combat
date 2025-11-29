@@ -63,17 +63,25 @@ async def import_csv_task(data_rows, manager_name, sheet_id, bot, chat_id):
             company_name = row[0].strip()
             
             # Пробуем обогатить данные через API (финансы, ОКВЭД и т.д.)
-            # Это может занять время, но зато таблица будет полной.
             company_api_data = {}
             if inn:
                 try:
-                    # Задержка перед запросом к API, чтобы не ловить 429
+                    # Задержка перед запросом к API
                     await asyncio.sleep(0.5)
                     api_result = await datanewton_api.get_full_company_data(inn)
                     if api_result:
                         company_api_data = api_result
+                        # --- DEBUG LOGGING ---
+                        logger.info(f"API Data for {inn}: Gov={api_result.get('gov_contracts')}, OKPD={api_result.get('okpd')}, OKPD_Name={api_result.get('okpd_name')}")
+                    else:
+                         logger.warning(f"API returned None for {inn}")
                 except Exception as e:
                     logger.warning(f"Failed to fetch API data for INN {inn}: {e}")
+
+            # Логика извлечения из CSV для отладки
+            csv_gov = (row[13].strip() if len(row) > 13 and len(row) > 15 else (row[18].strip() if len(row) > 18 else 'NONE'))
+            csv_okpd_name = (row[15].strip() if len(row) > 15 and len(row) > 15 else 'NONE')
+            logger.info(f"CSV Fallback for {inn}: Gov={csv_gov}, OKPD_Name={csv_okpd_name}")
 
             call_data = {
                 'company_name': company_api_data.get('name') or company_name,
