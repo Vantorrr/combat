@@ -84,7 +84,8 @@ async def import_csv_task(data_rows, manager_name, sheet_id, bot, chat_id):
                         row[4].strip() if len(row) > 4 and row[4].strip() else datetime.now().strftime('%d.%m.%y')
                     )
                 ),
-                'next_call_date': row[4].strip() if len(row) > 4 else '',
+                # Исправлено: индекс 5 (F) для даты следующего звонка (в Книга1 3.csv это колонка F)
+                'next_call_date': row[5].strip() if len(row) > 5 else '',
                 'comment': _format_imported_comments(row),
                 
                 # ЛОГИКА ФИНАНСОВ И ГОСКОНТРАКТОВ (с фоллбэком на CSV)
@@ -122,13 +123,13 @@ async def import_csv_task(data_rows, manager_name, sheet_id, bot, chat_id):
             # Добавляем в таблицу менеджера
             await google_sheets_service.add_new_call(sheet_id, call_data)
             
-            # Задержка
-            await asyncio.sleep(1.5)
+            # Задержка (уменьшил до 0.5, чтобы быстрее работало)
+            await asyncio.sleep(0.5)
 
             # Добавляем в сводную таблицу
             await google_sheets_service.update_supervisor_sheet(manager_name, call_data)
             
-            await asyncio.sleep(1.5)
+            await asyncio.sleep(0.5)
             
             success_count += 1
             
