@@ -90,12 +90,9 @@ class GoogleSheetsService:
             self._ensure_oauth_files()
             
             # Попытка через OAuth (приоритетнее)
-            # Мы импортируем внутри метода, чтобы избежать циклических импортов, если они есть,
-            # и чтобы не падать при старте, если модуля нет (хотя он есть).
             try:
                 from services.google_sheets_oauth import oauth_client
                 sheets_service = oauth_client.get_sheets_service()
-                # Если oauth_client вернул сервис, значит токены есть и валидны (или обновлены)
                 if sheets_service:
                     self.service = sheets_service
                     self.credentials = oauth_client.creds
@@ -177,7 +174,6 @@ class GoogleSheetsService:
             logger.info(f"Created new sheet for {manager_name}: {new_sheet_id}")
 
             # 2. Даем доступ (Share to anyone with link as Editor)
-            # Чтобы ты мог открыть таблицу, созданную сервисным аккаунтом.
             try:
                 drive_service = build('drive', 'v3', credentials=self.credentials)
                 permission = {
@@ -227,6 +223,7 @@ class GoogleSheetsService:
                 "ОКВЭД (основной)",  # O
                 "Наименование ОКПД",  # P
                 "Дата первого звонка",  # Q
+                "Дата последнего звонка",  # R - NEW
             ]
         ]
         
@@ -263,26 +260,6 @@ class GoogleSheetsService:
                 }
             }]
         }
-        
-        # Скрываем финансовые/служебные колонки по умолчанию (не меняем индексы)
-        # ОТКЛЮЧЕНО ПО ПРОСЬБЕ ПОЛЬЗОВАТЕЛЯ (чтобы данные не "пропадали")
-        # hidden_columns = list(range(6, 12)) + list(range(12, 17))
-        # first_gid = self._get_first_sheet_gid(sheet_id)
-        # for col_index in hidden_columns:
-        #     format_request['requests'].append({
-        #         'updateDimensionProperties': {
-        #             'range': {
-        #                 'sheetId': first_gid,
-        #                 'dimension': 'COLUMNS',
-        #                 'startIndex': col_index,
-        #                 'endIndex': col_index + 1
-        #             },
-        #             'properties': {
-        #                 'hiddenByUser': True
-        #             },
-        #             'fields': 'hiddenByUser'
-        #         }
-        #     })
         
         self.service.spreadsheets().batchUpdate(
             spreadsheetId=sheet_id,
@@ -337,7 +314,7 @@ class GoogleSheetsService:
 
             result = self.service.spreadsheets().values().get(
                 spreadsheetId=settings.supervisor_sheet_id,
-                range='A:R'
+                range='A:S' # Увеличили диапазон чтения
             ).execute()
             values = result.get('values', [])
             next_row = 2 if len(values) < 2 else len(values) + 1
@@ -355,7 +332,11 @@ class GoogleSheetsService:
                 new_comment = f"[{manager_name}] [{current_date}] {call_data.get('comment', '')}"
                 updated_comments = f"{new_comment}\n---\n{existing_comments}" if existing_comments else new_comment
                 updates.append({'range': f'F{company_row}', 'values': [[updated_comments]]})
-                # Колонка менеджера убрана из структуры — не пишем в Y
+                # Обновляем дату последнего звонка в сводной таблице тоже? 
+                # Логично, чтобы руководитель видел. Но мы не знаем индекс последней колонки точно, если там Менеджер.
+                # У нас структура: A-Q + R(Менеджер). Теперь будет A-Q + R(Дата последнего) + S(Менеджер)?
+                # Пока не будем ломать сводную сложной логикой, просто комментарии и дату.
+                
                 self.service.spreadsheets().values().batchUpdate(
                     spreadsheetId=settings.supervisor_sheet_id,
                     body={'valueInputOption': 'USER_ENTERED', 'data': updates}
@@ -379,6 +360,7 @@ class GoogleSheetsService:
                     call_data.get('okved_main', ''),  # O
                     call_data.get('okpd_name', ''),  # P
                     current_date,  # Q
+                    # Нет колонки даты последнего звонка пока в сводной, оставляем как было
                     manager_name  # R
                 ]
                 self.service.spreadsheets().values().append(
@@ -392,14 +374,7 @@ class GoogleSheetsService:
             logger.error(f"Error updating supervisor sheet: {e}")
             
     async def update_specific_columns(self, sheet_id: str, inn: str, updates: Dict[str, Any]) -> bool:
-        """
-        Обновить только определенные колонки в существующей строке таблицы.
-        
-        updates: dict с ключами 'column' (буква) и 'value' (значение)
-        Пример: {'column': 'Q', 'value': '5'} для обновления колонки Q (Арбитражные дела)
-        
-        Это экономит токены - обновляем только нужные ячейки.
-        """
+        """Обновить только определенные колонки в существующей строке таблицы."""
         try:
             # Получаем все данные
             result = self.service.spreadsheets().values().get(
@@ -472,6 +447,74 @@ class GoogleSheetsService:
             logger.error(f"Error fetching today calls: {e}")
             return []
 
+    async def get_missed_calls(self, sheet_id: str) -> List[Dict[str, Any]]:
+        """Получить список пропущенных звонков (недозвонов).
+        Логика:
+        1. Дата следующего звонка <= Сегодня.
+        2. Дата последнего звонка (Col R) != Сегодня.
+        """
+        try:
+            result = self.service.spreadsheets().values().get(
+                spreadsheetId=sheet_id,
+                range='A:R'  # Читаем до R включительно
+            ).execute()
+            values = result.get('values', [])
+            
+            if len(values) < 2:
+                return []
+
+            today = datetime.now().date()
+            today_str = self._now_str() # DD.MM.YY
+            missed_calls = []
+            
+            for row in values[1:]:
+                if len(row) < 5: # Нужно хотя бы до E (дата звонка)
+                    continue
+                    
+                next_call_date_str = row[4].strip()
+                if not next_call_date_str:
+                    continue
+                    
+                # Парсим дату следующего звонка
+                try:
+                    # Формат может быть DD.MM.YY или DD.MM.YYYY
+                    if len(next_call_date_str.split('.')[-1]) == 2:
+                        next_call_date = datetime.strptime(next_call_date_str, "%d.%m.%y").date()
+                    else:
+                        next_call_date = datetime.strptime(next_call_date_str, "%d.%m.%Y").date()
+                except ValueError:
+                    continue # Некорректная дата, пропускаем
+                
+                # Если дата в будущем - не интересно
+                if next_call_date > today:
+                    continue
+                    
+                # Проверяем дату последнего звонка (Col R - индекс 17)
+                last_call_date_str = row[17].strip() if len(row) > 17 else ""
+                
+                # Проверяем историю звонков (Col F - индекс 5) на случай если R пустой
+                # Ищем вхождение сегодняшней даты в начале строки комментария
+                comments = row[5].strip() if len(row) > 5 else ""
+                has_comment_today = comments.startswith(f"[{today_str}]") or comments.startswith(today_str)
+                
+                # Если последний звонок был сегодня (по R или по комментарию) - значит звонили
+                if last_call_date_str == today_str or has_comment_today:
+                    continue
+                    
+                # Если дошли сюда - значит дата звонка наступила (или прошла), а звонка сегодня не было
+                missed_calls.append({
+                    'company_name': row[0] if len(row) > 0 else 'Не указано',
+                    'inn': row[1] if len(row) > 1 else 'Не указано',
+                    'phone': row[3] if len(row) > 3 else 'Не указано',
+                    'planned_date': next_call_date_str
+                })
+                            
+            return missed_calls
+            
+        except Exception as e:
+            logger.error(f"Error fetching missed calls: {e}")
+            return []
+
     async def add_new_call(self, sheet_id: str, call_data: Dict[str, Any]) -> bool:
         """Добавить данные о новом звонке (СТАРАЯ РАБОЧАЯ СХЕМА: по sheet_id)."""
         try:
@@ -507,13 +550,14 @@ class GoogleSheetsService:
                 call_data.get('gov_contracts', ''),  # N
                 call_data.get('okved_main', ''),  # O
                 call_data.get('okpd_name', ''),  # P
-                self._now_str()  # Q
+                self._now_str(),  # Q - Дата первого звонка
+                self._now_str(),  # R - Дата последнего звонка (NEW)
             ]
 
             request = {'values': [new_row]}
             self.service.spreadsheets().values().append(
                 spreadsheetId=sheet_id,
-                range=f'A{row_num}:Q{row_num}',
+                range=f'A{row_num}:R{row_num}', # Расширили диапазон до R
                 valueInputOption='USER_ENTERED',
                 insertDataOption='INSERT_ROWS',
                 body=request
@@ -589,8 +633,7 @@ class GoogleSheetsService:
             else:
                 updated_comments = new_comment
 
-            # Обновляем данные - АКТУАЛЬНАЯ СХЕМА
-            # УБРАЛИ обновление финансов отсюда, чтобы не стирать их, если данных нет в call_data
+            # Обновляем данные
             updates = [
                 {
                     'range': f'E{row_index}',  # Дата следующего звонка
@@ -599,13 +642,13 @@ class GoogleSheetsService:
                 {
                     'range': f'F{row_index}',  # История звонков
                     'values': [[updated_comments]]
+                },
+                {
+                    'range': f'R{row_index}',  # Дата последнего звонка (NEW)
+                    'values': [[self._now_str()]]
                 }
             ]
             
-            # Если в call_data ЕСТЬ финансовые данные (не пустые) - добавляем их в обновление
-            # Но обычно update_repeat_call вызывается без них, а финансы обновляются отдельно через update_specific_columns
-            # Поэтому здесь оставим только E и F, чтобы гарантированно не затереть G-P.
-
             body = {
                 'valueInputOption': 'USER_ENTERED',
                 'data': updates
@@ -615,15 +658,6 @@ class GoogleSheetsService:
                 spreadsheetId=sheet_id,
                 body=body
             ).execute()
-
-            # Принудительно обновляем формат валюты для измененной строки
-            # G(6) - N(13)
-            # УБРАЛИ: раз мы не трогаем финансы, то и формат переприменять не обязательно
-            # (если только мы не хотим починить формат, но это лучше делать при явной записи)
-            # gid = self._get_first_sheet_gid(sheet_id)
-            # requests = []
-            # for col_idx in range(6, 14):
-            # ... (код скрыт)
 
             return True
 

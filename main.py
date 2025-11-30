@@ -40,6 +40,7 @@ async def on_startup(bot: Bot):
         scheduler = AsyncIOScheduler(timezone=settings.timezone)
 
         async def send_daily_reminders():
+            """Рассылка утренних напоминаний о звонках"""
             try:
                 google_sheets = get_google_sheets_service()
                 # Получаем список менеджеров и шлём напоминания
@@ -64,13 +65,80 @@ async def on_startup(bot: Bot):
             except Exception as e:
                 logger.warning(f"Reminder job failed: {e}")
 
-        # Несколько времен напоминаний в день
+        async def send_missed_call_reports():
+            """Рассылка отчетов о недозвонах (вечерний отчет)"""
+            try:
+                logger.info("Starting missed call reports...")
+                google_sheets = get_google_sheets_service()
+                async for session in get_session():
+                    # Получаем всех активных менеджеров
+                    result = await session.execute(Manager.__table__.select().where(Manager.is_active == True))
+                    managers = result.scalars().all()
+                    
+                    for manager in managers:
+                        if not manager.google_sheet_id:
+                            continue
+                            
+                        # 1. Проверяем таблицу менеджера на недозвоны
+                        missed_calls = await google_sheets.get_missed_calls(manager.google_sheet_id)
+                        
+                        if not missed_calls:
+                            continue
+                            
+                        # 2. Формируем сообщение для менеджера
+                        msg_manager = (
+                            f"⚠️ *Отчет о недозвонах*\n\n"
+                            f"Сегодня вы пропустили {len(missed_calls)} запланированных звонков:\n"
+                        )
+                        for call in missed_calls[:10]: # Показываем первые 10
+                            msg_manager += f"- {call['company_name']} (план: {call['planned_date']})\n"
+                        if len(missed_calls) > 10:
+                            msg_manager += f"... и еще {len(missed_calls) - 10} компаний."
+                        
+                        msg_manager += "\nНе забудьте позвонить им завтра!"
+                        
+                        # Шлем менеджеру
+                        if manager.telegram_id:
+                            try:
+                                await bot.send_message(manager.telegram_id, msg_manager, parse_mode="Markdown")
+                            except Exception as e:
+                                logger.warning(f"Could not send report to manager {manager.full_name}: {e}")
+
+                        # 3. Формируем сообщение для админов
+                        msg_admin = (
+                            f"📊 *Контроль недозвонов*\n"
+                            f"Менеджер: {manager.full_name}\n"
+                            f"Пропущено звонков: {len(missed_calls)}\n"
+                        )
+                        
+                        # Шлем всем админам
+                        for admin_id in settings.admin_ids_list:
+                            try:
+                                await bot.send_message(admin_id, msg_admin, parse_mode="Markdown")
+                            except Exception:
+                                pass
+                                
+                    await session.close()
+                logger.info("Missed call reports finished")
+            except Exception as e:
+                logger.error(f"Missed call report job failed: {e}")
+
+        # Несколько времен напоминаний в день (утро/день)
         for tm in settings.reminder_times_list:
             try:
                 h, m = map(int, tm.split(":"))
                 scheduler.add_job(send_daily_reminders, 'cron', hour=h, minute=m)
             except Exception:
                 logger.warning(f"Invalid reminder time skipped: {tm}")
+        
+        # Вечерний отчет о недозвонах
+        try:
+            rh, rm = map(int, settings.report_time.split(":"))
+            scheduler.add_job(send_missed_call_reports, 'cron', hour=rh, minute=rm)
+            logger.info(f"Scheduled missed call report at {settings.report_time}")
+        except Exception:
+            logger.warning(f"Invalid report time: {settings.report_time}")
+
         scheduler.start()
         logger.info("Scheduler started for daily reminders")
     except Exception as e:

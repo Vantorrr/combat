@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     # Scheduler
     reminder_time: str = "09:00"  # fallback
     reminder_times: str = "10:00,15:00,17:00"  # comma separated HH:MM
+    report_time: str = "19:00"  # Time for missed calls report
     timezone: str = "Europe/Moscow"
     
     class Config:
