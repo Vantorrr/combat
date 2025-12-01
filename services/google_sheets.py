@@ -516,6 +516,50 @@ class GoogleSheetsService:
             logger.error(f"Error fetching missed calls: {e}")
             return []
 
+    async def find_company_by_inn(self, sheet_id: str, inn: str) -> Optional[Dict[str, Any]]:
+        """
+        Ищет компанию по ИНН в Google Sheet и возвращает ее данные.
+        Возвращает словарь с данными компании или None, если не найдена.
+        """
+        try:
+            result = self.service.spreadsheets().values().get(
+                spreadsheetId=sheet_id,
+                range='A:R'  # Читаем до R включительно
+            ).execute()
+            values = result.get('values', [])
+
+            if not values or len(values) < 2:
+                return None # Нет данных или только заголовки
+
+            for row_index, row in enumerate(values[1:], 1): # Пропускаем заголовки
+                if len(row) > 1 and row[1].strip() == inn: # ИНН в колонке B (индекс 1)
+                    company_data = {
+                        'row_index': row_index + 1, # Реальный номер строки в таблице
+                        'company_name': row[0] if len(row) > 0 else '',
+                        'inn': row[1] if len(row) > 1 else '',
+                        'contact_name': row[2] if len(row) > 2 else '',
+                        'phone': row[3] if len(row) > 3 else '',
+                        'next_call_date': row[4] if len(row) > 4 else '',
+                        'comment': row[5] if len(row) > 5 else '',
+                        'revenue_previous': row[6] if len(row) > 6 else '',
+                        'revenue': row[7] if len(row) > 7 else '',
+                        'net_profit': row[8] if len(row) > 8 else '',
+                        'capital': row[9] if len(row) > 9 else '',
+                        'assets': row[10] if len(row) > 10 else '',
+                        'debit': row[11] if len(row) > 11 else '',
+                        'credit': row[12] if len(row) > 12 else '',
+                        'gov_contracts': row[13] if len(row) > 13 else '',
+                        'okved_main': row[14] if len(row) > 14 else '',
+                        'okpd_name': row[15] if len(row) > 15 else '',
+                        'first_call_date': row[16] if len(row) > 16 else '',
+                        'last_call_date': row[17] if len(row) > 17 else '',
+                    }
+                    return company_data
+            return None
+        except Exception as e:
+            logger.error(f"Error finding company by INN {inn} in sheet {sheet_id}: {e}")
+            return None
+
     async def add_new_call(self, sheet_id: str, call_data: Dict[str, Any], check_headers: bool = True) -> bool:
         """Добавить данные о новом звонке (СТАРАЯ РАБОЧАЯ СХЕМА: по sheet_id)."""
         try:
@@ -530,10 +574,28 @@ class GoogleSheetsService:
             values = result.get('values', [])
             row_num = 2 if len(values) <= 1 else len(values) + 1
 
-            # Префиксуем комментарий датой, чтобы история была читабельной
-            comment_prefixed = call_data.get('comment', '')
-            if comment_prefixed:
-                comment_prefixed = f"[{self._now_str()}] {comment_prefixed}"
+            # Префиксуем комментарий датой, если её ещё нет
+            comment = call_data.get('comment', '')
+            today_str = self._now_str()
+            
+            # Проверяем, начинается ли комментарий с даты [DD.MM.YY]
+            import re
+            has_date_prefix = False
+            if comment:
+                # Ищем паттерн [DD.MM.YY] или [DD.MM.YYYY] в начале
+                match = re.match(r'^\[\d{2}\.\d{2}\.\d{2,4}\]', comment.strip())
+                if match:
+                    has_date_prefix = True
+            
+            if comment and not has_date_prefix:
+                comment = f"[{today_str}] {comment}"
+            elif not comment:
+                comment = "" # Ensure it's not None
+
+            # Дата первого звонка: приоритет из call_data, иначе сегодня
+            first_call_date = call_data.get('first_call_date')
+            if not first_call_date:
+                first_call_date = self._now_str()
 
             new_row = [
                 call_data.get('company_name', ''),  # A
@@ -541,7 +603,7 @@ class GoogleSheetsService:
                 call_data.get('contact_name', ''),  # C
                 call_data.get('phone', ''),  # D
                 call_data.get('next_call_date', ''),  # E
-                comment_prefixed,  # F
+                comment,  # F
                 call_data.get('revenue_previous', ''),  # G (позапрошлый год)
                 call_data.get('revenue', ''),  # H (прошлый год)
                 call_data.get('net_profit', ''),  # I
@@ -552,7 +614,7 @@ class GoogleSheetsService:
                 call_data.get('gov_contracts', ''),  # N
                 call_data.get('okved_main', ''),  # O
                 call_data.get('okpd_name', ''),  # P
-                self._now_str(),  # Q - Дата первого звонка
+                first_call_date,  # Q - Дата первого звонка
                 self._now_str(),  # R - Дата последнего звонка (NEW)
             ]
 

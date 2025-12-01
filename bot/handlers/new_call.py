@@ -69,6 +69,30 @@ async def process_inn(message: Message, state: FSMContext):
     # Отправляем сообщение о проверке
     checking_msg = await message.answer("🔍 Проверяю ИНН...")
     
+    # 1. Проверяем, есть ли компания уже в таблице менеджера (Защита от дурака)
+    data = await state.get_data()
+    manager_sheet_id = data.get('manager_sheet_id')
+    
+    if manager_sheet_id:
+        try:
+            google_sheets_service = get_google_sheets_service()
+            existing_company = await google_sheets_service.find_company_by_inn(manager_sheet_id, inn)
+            
+            if existing_company:
+                await checking_msg.edit_text(
+                    f"⚠️ *Компания уже есть в базе!*\n\n"
+                    f"Компания с ИНН {inn} найдена в вашей таблице.\n"
+                    f"Название: {existing_company.get('company_name', 'Не указано')}\n\n"
+                    "Пожалуйста, используйте функцию *Повторный звонок*.",
+                    parse_mode="Markdown",
+                    reply_markup=get_main_menu()
+                )
+                await state.clear()
+                return
+        except Exception as e:
+            logger.error(f"Error checking existing company: {e}")
+            # Не прерываем работу, если проверка не удалась, но логируем
+    
     # Проверяем ИНН через API и получаем полные данные включая финансы
     company_data = await datanewton_api.get_full_company_data(inn)
     

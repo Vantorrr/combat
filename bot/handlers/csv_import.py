@@ -27,7 +27,7 @@ def _format_imported_comments(row):
     
     # Комментарий 1
     if len(row) > 6 and row[6].strip():
-        comments.append(f"{today} - {row[6].strip()}")
+        comments.append(f"[{today}] {row[6].strip()}")
     
     # Комментарий 2 (если есть)
     if len(row) > 7 and row[7].strip():
