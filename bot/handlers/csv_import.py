@@ -50,6 +50,14 @@ async def import_csv_task(data_rows, manager_name, sheet_id, bot, chat_id):
     
     logger.info(f"Background CSV import started for {manager_name} ({len(data_rows)} rows)")
 
+    # Предварительно настраиваем заголовки ОДИН РАЗ перед циклом, чтобы не делать это на каждой строке
+    try:
+        await google_sheets_service._setup_sheet_headers(sheet_id)
+        if google_sheets_service.settings.supervisor_sheet_id:
+             await google_sheets_service._setup_supervisor_headers(google_sheets_service.settings.supervisor_sheet_id)
+    except Exception as e:
+        logger.warning(f"Initial headers setup failed (will try inside loop if needed): {e}")
+
     for i, row in enumerate(data_rows, 1):
         try:
             # Минимум 7 колонок
@@ -121,17 +129,21 @@ async def import_csv_task(data_rows, manager_name, sheet_id, bot, chat_id):
             }
             
             # Добавляем в таблицу менеджера
-            await google_sheets_service.add_new_call(sheet_id, call_data)
-            
-            # Задержка (уменьшил до 0.5, чтобы быстрее работало)
-            await asyncio.sleep(0.5)
+            # Используем check_headers=False, так как мы вызываем _setup_sheet_headers перед циклом
+            if await google_sheets_service.add_new_call(sheet_id, call_data, check_headers=False):
+                # Задержка (увеличили до 1.2, чтобы надежнее работало)
+                await asyncio.sleep(1.2)
 
-            # Добавляем в сводную таблицу
-            await google_sheets_service.update_supervisor_sheet(manager_name, call_data)
-            
-            await asyncio.sleep(0.5)
-            
-            success_count += 1
+                # Добавляем в сводную таблицу
+                # Также check_headers=False для оптимизации
+                await google_sheets_service.update_supervisor_sheet(manager_name, call_data, check_headers=False)
+                
+                await asyncio.sleep(1.2)
+                
+                success_count += 1
+            else:
+                logger.error(f"Failed to write row {i} to Google Sheets")
+                error_count += 1
             
         except Exception as e:
             logger.error(f"Error processing row {i}: {e}")

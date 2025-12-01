@@ -300,17 +300,18 @@ class GoogleSheetsService:
                 body={'requests': requests}
             ).execute()
 
-    async def update_supervisor_sheet(self, manager_name: str, call_data: Dict[str, Any]):
+    async def update_supervisor_sheet(self, manager_name: str, call_data: Dict[str, Any], check_headers: bool = True):
         """Обновить сводную таблицу руководителя"""
         try:
             if not settings.supervisor_sheet_id:
                 logger.warning("Supervisor sheet ID not configured")
                 return
-            # Обеспечиваем корректные заголовки с колонкой Менеджер
-            try:
-                await self._setup_supervisor_headers(settings.supervisor_sheet_id)
-            except Exception as e:
-                logger.warning(f"Failed to setup supervisor headers: {e}")
+            # Обеспечиваем корректные заголовки с колонкой Менеджер (только если просят)
+            if check_headers:
+                try:
+                    await self._setup_supervisor_headers(settings.supervisor_sheet_id)
+                except Exception as e:
+                    logger.warning(f"Failed to setup supervisor headers: {e}")
 
             result = self.service.spreadsheets().values().get(
                 spreadsheetId=settings.supervisor_sheet_id,
@@ -515,11 +516,12 @@ class GoogleSheetsService:
             logger.error(f"Error fetching missed calls: {e}")
             return []
 
-    async def add_new_call(self, sheet_id: str, call_data: Dict[str, Any]) -> bool:
+    async def add_new_call(self, sheet_id: str, call_data: Dict[str, Any], check_headers: bool = True) -> bool:
         """Добавить данные о новом звонке (СТАРАЯ РАБОЧАЯ СХЕМА: по sheet_id)."""
         try:
-            # Гарантируем корректные заголовки
-            await self._setup_sheet_headers(sheet_id)
+            # Гарантируем корректные заголовки (только если просят)
+            if check_headers:
+                await self._setup_sheet_headers(sheet_id)
 
             result = self.service.spreadsheets().values().get(
                 spreadsheetId=sheet_id,
