@@ -112,18 +112,46 @@ async def process_repeat_inn(message: Message, state: FSMContext, session: Async
             reply_markup=get_cancel_keyboard()
         )
     else:
-        logger.info(f"[repeat_call] no company found for inn={inn} manager_id={data.get('manager_id')}")
-        # Разрешаем продолжить, даже если компания не найдена в локальной базе
-        await state.update_data(
-            inn=inn,
-            company_name="Не указано"
-        )
-        await state.set_state(RepeatCallStates.waiting_for_comment)
-        await message.answer(
-            "ℹ️ Компания с таким ИНН не найдена в вашей базе.\n"
-            "Вы всё равно можете добавить комментарий к повторному звонку.",
-            reply_markup=get_cancel_keyboard()
-        )
+        # Не нашли в локальной БД - ищем в Google Sheets
+        logger.info(f"[repeat_call] not in local DB, searching Google Sheets for inn={inn}")
+        google_sheets_service = get_google_sheets_service()
+        sheet_company = await google_sheets_service.find_company_by_inn(data['manager_sheet_id'], inn)
+        
+        if sheet_company:
+            # Нашли в таблице!
+            await state.update_data(
+                inn=inn,
+                company_name=sheet_company.get('company_name', 'Не указано')
+            )
+            logger.info(f"[repeat_call] found company in Google Sheets: '{sheet_company.get('company_name')}'")
+            await state.set_state(RepeatCallStates.waiting_for_comment)
+            
+            last_comment = sheet_company.get('comment', '')
+            comment_preview = last_comment[:200] + "..." if len(last_comment) > 200 else last_comment
+            
+            await message.answer(
+                f"✅ Найдена компания (в таблице):\n\n"
+                f"*{sheet_company.get('company_name', 'Не указано')}*\n"
+                f"ИНН: {inn}\n"
+                f"Контакт: {sheet_company.get('contact_name', 'Не указан')}\n"
+                f"Последний комментарий: {comment_preview}\n\n"
+                f"💬 Введите комментарий по результатам повторного звонка:",
+                parse_mode="Markdown",
+                reply_markup=get_cancel_keyboard()
+            )
+        else:
+            # Нет ни в БД, ни в таблице
+            logger.info(f"[repeat_call] company not found anywhere for inn={inn}")
+            await state.update_data(
+                inn=inn,
+                company_name="Не указано"
+            )
+            await state.set_state(RepeatCallStates.waiting_for_comment)
+            await message.answer(
+                "ℹ️ Компания с таким ИНН не найдена в вашей базе.\n"
+                "Вы всё равно можете добавить комментарий к повторному звонку.",
+                reply_markup=get_cancel_keyboard()
+            )
 
 
 @router.message(RepeatCallStates.waiting_for_comment)
