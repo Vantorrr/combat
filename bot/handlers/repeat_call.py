@@ -91,26 +91,22 @@ async def process_repeat_inn(message: Message, state: FSMContext, session: Async
         )
         return
     
+    # Переменные для данных компании
+    company_name = None
+    contact_name = None
+    last_comment = None
+    sheet_company = None
+    
     if existing_call:
+        company_name = existing_call.company_name
+        contact_name = existing_call.contact_name
+        last_comment = existing_call.comment
         await state.update_data(
             inn=inn, 
-            company_name=existing_call.company_name,
+            company_name=company_name,
             existing_call_id=existing_call.id
         )
-        logger.info(f"[repeat_call] found company '{existing_call.company_name}' for inn={inn}")
-        await state.set_state(RepeatCallStates.waiting_for_comment)
-        
-        # Показываем последний комментарий полностью, без обрезки
-        await message.answer(
-            f"✅ Найдена компания:\n\n"
-            f"*{existing_call.company_name}*\n"
-            f"ИНН: {inn}\n"
-            f"Последний контакт: {existing_call.contact_name}\n"
-            f"Последний комментарий: {existing_call.comment}\n\n"
-            f"💬 Введите комментарий по результатам повторного звонка:",
-            parse_mode="Markdown",
-            reply_markup=get_cancel_keyboard()
-        )
+        logger.info(f"[repeat_call] found company '{company_name}' for inn={inn}")
     else:
         # Не нашли в локальной БД - ищем в Google Sheets
         logger.info(f"[repeat_call] not in local DB, searching Google Sheets for inn={inn}")
@@ -118,27 +114,14 @@ async def process_repeat_inn(message: Message, state: FSMContext, session: Async
         sheet_company = await google_sheets_service.find_company_by_inn(data['manager_sheet_id'], inn)
         
         if sheet_company:
-            # Нашли в таблице!
+            company_name = sheet_company.get('company_name', 'Не указано')
+            contact_name = sheet_company.get('contact_name', '')
+            last_comment = sheet_company.get('comment', '')
             await state.update_data(
                 inn=inn,
-                company_name=sheet_company.get('company_name', 'Не указано')
+                company_name=company_name
             )
-            logger.info(f"[repeat_call] found company in Google Sheets: '{sheet_company.get('company_name')}'")
-            await state.set_state(RepeatCallStates.waiting_for_comment)
-            
-            last_comment = sheet_company.get('comment', '')
-            comment_preview = last_comment[:200] + "..." if len(last_comment) > 200 else last_comment
-            
-            await message.answer(
-                f"✅ Найдена компания (в таблице):\n\n"
-                f"*{sheet_company.get('company_name', 'Не указано')}*\n"
-                f"ИНН: {inn}\n"
-                f"Контакт: {sheet_company.get('contact_name', 'Не указан')}\n"
-                f"Последний комментарий: {comment_preview}\n\n"
-                f"💬 Введите комментарий по результатам повторного звонка:",
-                parse_mode="Markdown",
-                reply_markup=get_cancel_keyboard()
-            )
+            logger.info(f"[repeat_call] found company in Google Sheets: '{company_name}'")
         else:
             # Нет ни в БД, ни в таблице
             logger.info(f"[repeat_call] company not found anywhere for inn={inn}")
@@ -152,6 +135,95 @@ async def process_repeat_inn(message: Message, state: FSMContext, session: Async
                 "Вы всё равно можете добавить комментарий к повторному звонку.",
                 reply_markup=get_cancel_keyboard()
             )
+            return
+    
+    # Компания найдена - показываем базовую информацию
+    await state.set_state(RepeatCallStates.waiting_for_comment)
+    
+    comment_preview = last_comment[:200] + "..." if last_comment and len(last_comment) > 200 else (last_comment or "Нет")
+    
+    await message.answer(
+        f"✅ Найдена компания:\n\n"
+        f"*{company_name}*\n"
+        f"ИНН: {inn}\n"
+        f"Контакт: {contact_name or 'Не указан'}\n"
+        f"Последний комментарий: {comment_preview}\n\n"
+        f"⏳ Загружаю AI-подсказку...",
+        parse_mode="Markdown"
+    )
+    
+    # Генерируем AI-подсказку ПЕРЕД звонком
+    if settings.openai_api_key:
+        try:
+            # Получаем свежие данные из DataNewton
+            try:
+                fresh = await datanewton_api.get_full_company_data(inn)
+            except Exception as e:
+                fresh = {}
+                logger.warning(f"[repeat_call] DataNewton fetch failed: {e}")
+            
+            # Если нашли в Google Sheets, используем данные оттуда как fallback
+            if not fresh and sheet_company:
+                fresh = {
+                    'revenue': sheet_company.get('revenue', ''),
+                    'revenue_previous': sheet_company.get('revenue_previous', ''),
+                    'net_profit': sheet_company.get('net_profit', ''),
+                    'capital': sheet_company.get('capital', ''),
+                    'assets': sheet_company.get('assets', ''),
+                    'debit': sheet_company.get('debit', ''),
+                    'credit': sheet_company.get('credit', ''),
+                    'gov_contracts': sheet_company.get('gov_contracts', ''),
+                    'okved': sheet_company.get('okved_main', ''),
+                }
+            
+            # Собираем историю комментариев
+            all_comments = []
+            if existing_call:
+                hist_result = await session.execute(
+                    select(CallSession)
+                    .where(
+                        CallSession.manager_id == data['manager_id'],
+                        CallSession.company_inn == inn,
+                    )
+                    .order_by(CallSession.created_at.asc())
+                )
+                history = hist_result.scalars().all()
+                all_comments = [s.comment for s in history if s.comment]
+            elif last_comment:
+                all_comments = [last_comment]
+            
+            ai_text = await generate_ai_notification(
+                inn=inn,
+                company_name=company_name,
+                last_comment=last_comment or "",
+                last_call_date=datetime.now(),
+                all_comments=all_comments,
+                okved_code=fresh.get('okved') if fresh else None,
+                okved_name=fresh.get('okved_name') if fresh else None,
+                region=fresh.get('region') if fresh else None,
+                revenue=fresh.get('revenue') if fresh else None,
+                revenue_previous=fresh.get('revenue_previous') if fresh else None,
+                net_profit=fresh.get('net_profit') if fresh else None,
+                capital=fresh.get('capital') if fresh else None,
+                assets=fresh.get('assets') if fresh else None,
+                debit=fresh.get('debit') if fresh else None,
+                credit=fresh.get('credit') if fresh else None,
+                gov_contracts=fresh.get('gov_contracts') if fresh else None,
+                arbitration_open_count=fresh.get('arbitration_open_count') if fresh else None,
+                arbitration_open_sum=fresh.get('arbitration_open_sum') if fresh else None,
+                arbitration_last_doc_date=fresh.get('arbitration_last_doc_date') if fresh else None,
+                planned_call_date=datetime.now(),
+                contact_name=contact_name,
+            )
+            await message.answer(ai_text)
+        except Exception as e:
+            logger.warning(f"[repeat_call] AI pre-call notification failed: {e}")
+    
+    # Запрашиваем комментарий
+    await message.answer(
+        "💬 Введите комментарий по результатам звонка:",
+        reply_markup=get_cancel_keyboard()
+    )
 
 
 @router.message(RepeatCallStates.waiting_for_comment)
@@ -288,47 +360,6 @@ async def save_repeat_call(message: Message, state: FSMContext, session: AsyncSe
                 "Обратитесь к администратору.",
                 reply_markup=get_main_menu()
             )
-        # 3) После успешного сохранения — AI-инфоповод (если есть ключ)
-        if settings.openai_api_key:
-            try:
-                # История звонков по этому ИНН для этого менеджера
-                hist_result = await session.execute(
-                    select(CallSession)
-                    .where(
-                        CallSession.manager_id == data['manager_id'],
-                        CallSession.company_inn == data['inn'],
-                    )
-                    .order_by(CallSession.created_at.asc())
-                )
-                history = hist_result.scalars().all()
-                all_comments = [s.comment for s in history if s.comment]
-                last_call_date = history[-1].created_at if history else call_session.created_at
-
-                ai_text = await generate_ai_notification(
-                    inn=data['inn'],
-                    company_name=data['company_name'],
-                    last_comment=data['comment'],
-                    last_call_date=last_call_date,
-                    all_comments=all_comments,
-                    okved_code=fresh.get('okved') if fresh else None,
-                    okved_name=fresh.get('okved_name') if fresh else None,
-                    region=fresh.get('region') if fresh else None,
-                    revenue=fresh.get('revenue') if fresh else None,
-                    revenue_previous=fresh.get('revenue_previous') if fresh else None,
-                    net_profit=fresh.get('net_profit') if fresh else None,
-                    capital=fresh.get('capital') if fresh else None,
-                    assets=fresh.get('assets') if fresh else None,
-                    debit=fresh.get('debit') if fresh else None,
-                    credit=fresh.get('credit') if fresh else None,
-                    gov_contracts=fresh.get('gov_contracts') if fresh else None,
-                    arbitration_open_count=fresh.get('arbitration_open_count') if fresh else None,
-                    arbitration_open_sum=fresh.get('arbitration_open_sum') if fresh else None,
-                    arbitration_last_doc_date=fresh.get('arbitration_last_doc_date') if fresh else None,
-                    planned_call_date=call_session.next_call_date or datetime.now(),
-                )
-                await message.answer(ai_text)
-            except Exception as e:
-                logger.warning(f"[repeat_call] AI notification failed: {e}")
     except Exception as e:
         logger.error(f"Error updating Google Sheets: {e}")
         await message.answer(
