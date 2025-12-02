@@ -22,12 +22,41 @@ router = Router()
 
 def _format_imported_comments(row):
     """Форматировать комментарии из CSV в единую историю"""
+    import re
     comments = []
     today = datetime.now().strftime('%d.%m.%y')
     
     # Комментарий 1
     if len(row) > 6 and row[6].strip():
-        comments.append(f"[{today}] {row[6].strip()}")
+        raw_comment = row[6].strip()
+        # Проверяем, начинается ли комментарий уже с даты (в скобках или без)
+        # Примеры: "[01.12.25]", "01.12.25", "01/12/25", "01.12.2025"
+        date_match = re.match(r'^\[?(\d{2}[\./-]\d{2}[\./-]\d{2,4})\]?', raw_comment)
+        
+        if date_match:
+            # Если дата уже есть, берем её (или оставляем как есть)
+            # Чтобы избежать [Today] [01.12.25] ...
+            # Нормализуем к виду [DD.MM.YY], если получилось распарсить, но проще оставить как есть,
+            # лишь бы не добавлять Today сверху.
+            # Но чтобы было красиво, можно попробовать обернуть в скобки, если их нет.
+            
+            # Вариант 1: Если дата есть, просто добавляем коммент как есть.
+            # Вариант 2: Если дата есть без скобок "01.12.25 - ...", делаем "[01.12.25] ..."
+            
+            # Попробуем просто не добавлять [Today], если дата найдена.
+            # И если дата была без скобок, можно обернуть.
+            
+            existing_date = date_match.group(1)
+            rest_of_comment = raw_comment[len(date_match.group(0)):].strip()
+            
+            # Убираем возможные разделители после даты (тире, двоеточие)
+            if rest_of_comment.startswith(('-', ':', '.')):
+                rest_of_comment = rest_of_comment.lstrip('-:. ').strip()
+                
+            comments.append(f"[{existing_date}] {rest_of_comment}")
+        else:
+            # Даты нет - добавляем [Today]
+            comments.append(f"[{today}] {raw_comment}")
     
     # Комментарий 2 (если есть)
     if len(row) > 7 and row[7].strip():
