@@ -1,15 +1,17 @@
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery, InlineKeyboardButton
+from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.fsm.context import FSMContext
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from loguru import logger
+import asyncio
 
 from bot.keyboards.main import get_cancel_keyboard, get_admin_menu
 from bot.states.call_states import AdminStates
 from models.database import Manager
 from services.google_sheets import get_google_sheets_service
+from services.datanewton_api import datanewton_api
 from config import settings
 
 router = Router()
@@ -312,3 +314,196 @@ async def show_admin_menu(callback: CallbackQuery):
         reply_markup=get_admin_menu()
     )
     await callback.answer()
+
+# --- New Logic for DataNewton Update ---
+
+async def background_update_task(manager_name, sheet_id, bot, chat_id):
+    """
+    Фоновая задача для обновления данных из DataNewton в таблице менеджера.
+    """
+    google_sheets = get_google_sheets_service()
+    updated_count = 0
+    error_count = 0
+    skipped_count = 0
+    
+    logger.info(f"Background DataNewton update started for {manager_name}")
+    
+    try:
+        # 1. Читаем всю таблицу
+        result = google_sheets.service.spreadsheets().values().get(
+            spreadsheetId=sheet_id,
+            range='A:P' # Читаем до P (ОКПД)
+        ).execute()
+        values = result.get('values', [])
+        
+        if len(values) < 2:
+            await bot.send_message(chat_id, f"⚠️ Таблица менеджера {manager_name} пуста (кроме заголовков).", parse_mode="Markdown")
+            return
+
+        total_rows = len(values) - 1
+        await bot.send_message(chat_id, f"🔄 Начинаю проверку {total_rows} строк для {manager_name}...\n\n_Это может занять несколько минут._", parse_mode="Markdown")
+
+        # 2. Итерируемся по строкам
+        for i, row in enumerate(values[1:], 1): # i - это реальный индекс в списке values (без заголовка), +1 чтобы нумерация с 1
+            try:
+                inn = row[1].strip() if len(row) > 1 else ""
+                
+                if not inn:
+                    skipped_count += 1
+                    continue
+                
+                needs_update = False
+                
+                # Проверяем выручку (H - 7)
+                revenue = row[7].strip() if len(row) > 7 else ""
+                # Если пустая или 0 - обновляем
+                if not revenue or revenue == "0" or revenue == "0 ₽":
+                    needs_update = True
+                
+                # Проверяем госконтракты (N - 13)
+                gov = row[13].strip() if len(row) > 13 else ""
+                if not gov: 
+                    needs_update = True
+                    
+                # Проверяем ОКПД (P - 15)
+                okpd = row[15].strip() if len(row) > 15 else ""
+                if not okpd:
+                    needs_update = True
+
+                if not needs_update:
+                    skipped_count += 1
+                    continue
+
+                # 3. Запрашиваем данные
+                await asyncio.sleep(0.5) # Anti-rate limit
+                fresh_data = await datanewton_api.get_full_company_data(inn)
+                
+                if fresh_data:
+                    # 4. Обновляем в таблице
+                    column_updates = {
+                        'G': fresh_data.get('revenue_previous', ''),
+                        'H': fresh_data.get('revenue', ''),
+                        'I': fresh_data.get('net_profit', ''),
+                        'J': fresh_data.get('capital', ''),
+                        'K': fresh_data.get('assets', ''),
+                        'L': fresh_data.get('debit', ''),
+                        'M': fresh_data.get('credit', ''),
+                        'N': fresh_data.get('gov_contracts', ''),
+                        'O': fresh_data.get('okved', ''),
+                        'P': fresh_data.get('okpd_name', ''),
+                    }
+                    
+                    success = await google_sheets.update_specific_columns(sheet_id, inn, column_updates)
+                    
+                    if success:
+                        updated_count += 1
+                    else:
+                        error_count += 1
+                else:
+                    # API ничего не вернул
+                    skipped_count += 1
+                    
+            except Exception as e:
+                logger.error(f"Error updating row {i} for {manager_name}: {e}")
+                error_count += 1
+            
+            # Лог каждые 10 строк
+            if i % 10 == 0:
+                logger.info(f"Processed {i}/{total_rows} for {manager_name}...")
+        
+        # 5. Отчет
+        await bot.send_message(
+            chat_id,
+            f"✅ *Обновление завершено для {manager_name}*\n\n"
+            f"Всего строк: {total_rows}\n"
+            f"Обновлено: {updated_count}\n"
+            f"Пропущено (актуально): {skipped_count}\n"
+            f"Ошибок: {error_count}",
+            parse_mode="Markdown"
+        )
+
+    except Exception as e:
+        logger.error(f"Global error in update task: {e}")
+        await bot.send_message(chat_id, f"❌ Критическая ошибка обновления: {e}")
+
+
+@router.callback_query(F.data == "update_datanewton")
+async def start_update_datanewton(callback: CallbackQuery, state: FSMContext, session: AsyncSession):
+    """Начать процесс обновления данных"""
+    user_id = callback.from_user.id
+    
+    if user_id not in settings.admin_ids_list:
+        await callback.answer("❌ Недостаточно прав", show_alert=True)
+        return
+
+    # Получаем список активных менеджеров
+    result = await session.execute(
+        select(Manager).where(Manager.is_active == True).order_by(Manager.full_name)
+    )
+    managers = result.scalars().all()
+    
+    if not managers:
+        await callback.answer("Нет активных менеджеров", show_alert=True)
+        return
+    
+    # Создаем клавиатуру с менеджерами
+    builder = InlineKeyboardBuilder()
+    for manager in managers:
+        builder.row(
+            InlineKeyboardButton(
+                text=f"🔄 {manager.full_name}",
+                callback_data=f"update_manager:{manager.id}"
+            )
+        )
+    
+    builder.row(
+        InlineKeyboardButton(text="❌ Отмена", callback_data="admin_menu")
+    )
+    
+    await state.set_state(AdminStates.waiting_for_update_manager)
+    
+    await callback.message.edit_text(
+        "🔄 *Обновление данных (DataNewton)*\n\n"
+        "Эта функция пройдет по таблице менеджера и попытается загрузить недостающие финансовые данные, госконтракты и ОКПД.\n\n"
+        "Выберите менеджера:",
+        parse_mode="Markdown",
+        reply_markup=builder.as_markup()
+    )
+    await callback.answer()
+
+
+@router.callback_query(AdminStates.waiting_for_update_manager, F.data.startswith("update_manager:"))
+async def select_update_manager(callback: CallbackQuery, state: FSMContext, session: AsyncSession):
+    """Выбор менеджера для обновления"""
+    manager_id = int(callback.data.split(":")[1])
+    
+    # Получаем менеджера
+    result = await session.execute(
+        select(Manager).where(Manager.id == manager_id)
+    )
+    manager = result.scalar_one_or_none()
+    
+    if not manager:
+        await callback.answer("Менеджер не найден", show_alert=True)
+        return
+    
+    # Запускаем фоновую задачу
+    asyncio.create_task(
+        background_update_task(
+            manager_name=manager.full_name,
+            sheet_id=manager.google_sheet_id,
+            bot=callback.message.bot,
+            chat_id=callback.message.chat.id
+        )
+    )
+    
+    await callback.message.edit_text(
+        f"✅ *Задача запущена!* \n"
+        f"Менеджер: {manager.full_name}\n\n"
+        "Я буду проверять строки и догружать данные, если они отсутствуют.\n"
+        "По завершении пришлю отчет.\n\n"
+        "Вы можете продолжать работу.",
+        parse_mode="Markdown",
+        reply_markup=get_admin_menu()
+    )
+    await state.clear()

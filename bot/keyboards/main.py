@@ -64,6 +64,9 @@ def get_admin_menu() -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="📥 Импорт CSV", callback_data="import_csv")
     )
     builder.row(
+        InlineKeyboardButton(text="🔄 Обновить данные (DataNewton)", callback_data="update_datanewton")
+    )
+    builder.row(
         InlineKeyboardButton(text="🔙 Главное меню", callback_data="main_menu")
     )
     
