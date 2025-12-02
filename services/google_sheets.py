@@ -538,6 +538,9 @@ class GoogleSheetsService:
         """
         Ищет компанию по ИНН в Google Sheet и возвращает ее данные.
         Возвращает словарь с данными компании или None, если не найдена.
+        
+        Учитывает, что ИНН с ведущим нулём может храниться без него (Google Sheets 
+        автоматически убирает ведущие нули у чисел).
         """
         try:
             result = self.service.spreadsheets().values().get(
@@ -549,30 +552,38 @@ class GoogleSheetsService:
             if not values or len(values) < 2:
                 return None # Нет данных или только заголовки
 
+            # Нормализуем искомый ИНН (убираем ведущие нули для сравнения)
+            inn_normalized = inn.lstrip('0')
+            
             for row_index, row in enumerate(values[1:], 1): # Пропускаем заголовки
-                if len(row) > 1 and row[1].strip() == inn: # ИНН в колонке B (индекс 1)
-                    company_data = {
-                        'row_index': row_index + 1, # Реальный номер строки в таблице
-                        'company_name': row[0] if len(row) > 0 else '',
-                        'inn': row[1] if len(row) > 1 else '',
-                        'contact_name': row[2] if len(row) > 2 else '',
-                        'phone': row[3] if len(row) > 3 else '',
-                        'next_call_date': row[4] if len(row) > 4 else '',
-                        'comment': row[5] if len(row) > 5 else '',
-                        'revenue_previous': row[6] if len(row) > 6 else '',
-                        'revenue': row[7] if len(row) > 7 else '',
-                        'net_profit': row[8] if len(row) > 8 else '',
-                        'capital': row[9] if len(row) > 9 else '',
-                        'assets': row[10] if len(row) > 10 else '',
-                        'debit': row[11] if len(row) > 11 else '',
-                        'credit': row[12] if len(row) > 12 else '',
-                        'gov_contracts': row[13] if len(row) > 13 else '',
-                        'okved_main': row[14] if len(row) > 14 else '',
-                        'okpd_name': row[15] if len(row) > 15 else '',
-                        'first_call_date': row[16] if len(row) > 16 else '',
-                        'last_call_date': row[17] if len(row) > 17 else '',
-                    }
-                    return company_data
+                if len(row) > 1:
+                    sheet_inn = str(row[1]).strip()
+                    sheet_inn_normalized = sheet_inn.lstrip('0')
+                    
+                    # Сравниваем и полный ИНН, и без ведущих нулей
+                    if sheet_inn == inn or sheet_inn_normalized == inn_normalized:
+                        company_data = {
+                            'row_index': row_index + 1, # Реальный номер строки в таблице
+                            'company_name': row[0] if len(row) > 0 else '',
+                            'inn': inn,  # Возвращаем оригинальный ИНН с нулём
+                            'contact_name': row[2] if len(row) > 2 else '',
+                            'phone': row[3] if len(row) > 3 else '',
+                            'next_call_date': row[4] if len(row) > 4 else '',
+                            'comment': row[5] if len(row) > 5 else '',
+                            'revenue_previous': row[6] if len(row) > 6 else '',
+                            'revenue': row[7] if len(row) > 7 else '',
+                            'net_profit': row[8] if len(row) > 8 else '',
+                            'capital': row[9] if len(row) > 9 else '',
+                            'assets': row[10] if len(row) > 10 else '',
+                            'debit': row[11] if len(row) > 11 else '',
+                            'credit': row[12] if len(row) > 12 else '',
+                            'gov_contracts': row[13] if len(row) > 13 else '',
+                            'okved_main': row[14] if len(row) > 14 else '',
+                            'okpd_name': row[15] if len(row) > 15 else '',
+                            'first_call_date': row[16] if len(row) > 16 else '',
+                            'last_call_date': row[17] if len(row) > 17 else '',
+                        }
+                        return company_data
             return None
         except Exception as e:
             logger.error(f"Error finding company by INN {inn} in sheet {sheet_id}: {e}")
@@ -615,9 +626,14 @@ class GoogleSheetsService:
             if not first_call_date:
                 first_call_date = self._now_str()
 
+            # ИНН сохраняем как текст с апострофом, чтобы ведущие нули не терялись
+            inn_value = call_data.get('inn', '')
+            if inn_value and inn_value.startswith('0'):
+                inn_value = f"'{inn_value}"  # Апостроф заставляет Google Sheets хранить как текст
+            
             new_row = [
                 call_data.get('company_name', ''),  # A
-                call_data.get('inn', ''),  # B
+                inn_value,  # B - ИНН как текст
                 call_data.get('contact_name', ''),  # C
                 call_data.get('phone', ''),  # D
                 call_data.get('next_call_date', ''),  # E
@@ -692,11 +708,18 @@ class GoogleSheetsService:
 
             values = result.get('values', [])
             row_index = None
+            
+            # Нормализуем искомый ИНН (убираем ведущие нули для сравнения)
+            inn_normalized = inn.lstrip('0')
 
             for i, row in enumerate(values):
-                if len(row) > 1 and row[1] == inn:  # ИНН в колонке B
-                    row_index = i + 1
-                    break
+                if len(row) > 1:
+                    sheet_inn = str(row[1]).strip()
+                    sheet_inn_normalized = sheet_inn.lstrip('0')
+                    # Сравниваем и полный ИНН, и без ведущих нулей
+                    if sheet_inn == inn or sheet_inn_normalized == inn_normalized:
+                        row_index = i + 1
+                        break
 
             if row_index is None:
                 logger.error(f"Company with INN {inn} not found")
