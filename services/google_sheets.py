@@ -426,7 +426,10 @@ class GoogleSheetsService:
             ).execute()
             values = result.get('values', [])
             
-            today = self._now_str()
+            # Получаем сегодняшнюю дату как объект date
+            from datetime import datetime
+            today_date = datetime.now().date()
+            
             today_calls = []
             
             # Пропускаем заголовок
@@ -434,8 +437,24 @@ class GoogleSheetsService:
                 for row in values[1:]:
                     # ИНН - колонка B (index 1), Дата след. звонка - колонка E (index 4)
                     if len(row) > 4:
-                        next_call_date = row[4].strip()
-                        if next_call_date == today:
+                        next_call_date_str = row[4].strip()
+                        if not next_call_date_str:
+                            continue
+                            
+                        # Пытаемся распарсить дату из ячейки
+                        parsed_date = None
+                        try:
+                            # Пробуем формат DD.MM.YY
+                            if len(next_call_date_str.split('.')[-1]) == 2:
+                                parsed_date = datetime.strptime(next_call_date_str, "%d.%m.%y").date()
+                            # Пробуем формат DD.MM.YYYY
+                            elif len(next_call_date_str.split('.')[-1]) == 4:
+                                parsed_date = datetime.strptime(next_call_date_str, "%d.%m.%Y").date()
+                        except ValueError:
+                            continue # Невалидная дата
+                        
+                        # Сравниваем даты
+                        if parsed_date == today_date:
                             today_calls.append({
                                 'company_name': row[0] if len(row) > 0 else 'Не указано',
                                 'inn': row[1] if len(row) > 1 else 'Не указано',
