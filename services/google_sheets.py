@@ -427,7 +427,6 @@ class GoogleSheetsService:
             values = result.get('values', [])
             
             # Получаем сегодняшнюю дату как объект date
-            from datetime import datetime
             today_date = datetime.now().date()
             
             today_calls = []
