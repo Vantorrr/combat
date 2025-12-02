@@ -71,18 +71,16 @@ async def show_today_calls(callback: CallbackQuery, session: AsyncSession):
             message_text = "📅 *Звонки на сегодня:*\n\n"
             
             for i, call in enumerate(today_calls, 1):
-                message_text += f"{i}. *{call['company_name']}*\n"
-                message_text += f"   ИНН: {call['inn']}\n"
+                message_text += f"{i}. *{call.get('company_name', 'Не указано')}*\n"
+                message_text += f"   ИНН: {call.get('inn', 'Не указано')}\n"
                 
-                if call['contact_name']:
-                    message_text += f"   Контакт: {call['contact_name']}\n"
+                contact_name = call.get('contact_name')
+                if contact_name:
+                    message_text += f"   Контакт: {contact_name}\n"
                 
-                if call['phone']:
-                    message_text += f"   Телефон: {call['phone']}\n"
-                
-                if call['last_comment']:
-                    comment_preview = call['last_comment'][:50] + "..." if len(call['last_comment']) > 50 else call['last_comment']
-                    message_text += f"   Последний комментарий: _{comment_preview}_\n"
+                phone = call.get('phone')
+                if phone:
+                    message_text += f"   Телефон: {phone}\n"
                 
                 message_text += "\n"
             
