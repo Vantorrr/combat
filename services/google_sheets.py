@@ -82,24 +82,10 @@ class GoogleSheetsService:
     
     def _initialize_service(self):
         """Инициализация сервиса Google Sheets.
-        Если есть oauth_client.json/token.json — используем OAuth.
-        Иначе — service account.
+        Используем Service Account (надёжнее).
         """
         try:
-            # При необходимости восстановить OAuth файлы
-            self._ensure_oauth_files()
-            
-            # Попытка через OAuth (приоритетнее)
-            try:
-                from services.google_sheets_oauth import oauth_client
-                sheets_service = oauth_client.get_sheets_service()
-                if sheets_service:
-                    self.service = sheets_service
-                    self.credentials = oauth_client.creds
-                    logger.info("Google Sheets via OAuth (User Account)")
-                    return
-            except Exception as oauth_err:
-                logger.warning(f"OAuth not configured or failed, fallback to service account: {oauth_err}")
+            # Сразу используем Service Account - он не требует refresh токенов
 
             # Fallback: service account
             sa_json_env = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
