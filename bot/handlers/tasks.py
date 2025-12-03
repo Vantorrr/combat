@@ -9,7 +9,7 @@ from sqlalchemy import select
 from bot.states.call_states import TaskStates, RepeatCallStates
 from services.google_sheets import get_google_sheets_service
 from services.datanewton_api import datanewton_api
-from services.ai_assistant import generate_ai_notification
+from services.ai_advisor import generate_ai_notification
 from database.models import User, CallSession
 from database.session import async_session
 from config import settings
