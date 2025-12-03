@@ -168,12 +168,14 @@ async def show_next_task(message: types.Message, state: FSMContext, user_id: int
         except Exception as e:
             logger.error(f"AI generation failed: {e}")
 
-    # Сохраняем состояние
+    # Сохраняем состояние (включая manager_id и manager_name для save_repeat_call)
     await state.set_state(TaskStates.viewing_task)
     await state.update_data(
         current_inn=inn, 
         manager_sheet_id=manager.google_sheet_id,
-        company_name=company_name
+        company_name=company_name,
+        manager_id=manager.id,
+        manager_name=manager.full_name
     )
 
 @router.callback_query(F.data.startswith("task_done:"))
@@ -184,13 +186,19 @@ async def task_done_handler(callback: types.CallbackQuery, state: FSMContext, se
     data = await state.get_data()
     company_name = data.get("company_name", "Компания")
     manager_sheet_id = data.get("manager_sheet_id")
+    manager_id = data.get("manager_id")
+    manager_name = data.get("manager_name")
+    task_index = data.get("task_index", 0)
     
-    # Сохраняем данные для повторного звонка
+    # Сохраняем данные для повторного звонка (все нужные поля для save_repeat_call)
     await state.set_state(RepeatCallStates.waiting_for_comment)
     await state.update_data(
         inn=inn,
         manager_sheet_id=manager_sheet_id,
         company_name=company_name,
+        manager_id=manager_id,
+        manager_name=manager_name,
+        task_index=task_index,
         is_task_flow=True # Флаг, что мы в режиме задач (чтобы потом вернуть в tasks)
     )
     
