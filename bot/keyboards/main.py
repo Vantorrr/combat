@@ -11,6 +11,9 @@ def get_main_menu() -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="🔄 Повторный звонок", callback_data="repeat_call")
     )
     builder.row(
+        InlineKeyboardButton(text="📞 Текущая задача", callback_data="next_task")
+    )
+    builder.row(
         InlineKeyboardButton(text="📊 Моя таблица", callback_data="my_sheet"),
         InlineKeyboardButton(text="📅 Звонки на сегодня", callback_data="today_calls")
     )

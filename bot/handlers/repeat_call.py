@@ -272,6 +272,10 @@ async def skip_repeat_next_call_date(callback: CallbackQuery, state: FSMContext,
     await callback.answer()
 
 
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+# ... imports ...
+
 async def save_repeat_call(message: Message, state: FSMContext, session: AsyncSession):
     """Сохранить данные повторного звонка"""
     data = await state.get_data()
@@ -346,20 +350,52 @@ async def save_repeat_call(message: Message, state: FSMContext, session: AsyncSe
                 supervisor_data
             )
             
-            await message.answer(
-                "✅ Данные повторного звонка сохранены!\n\n"
-                f"Компания: *{data['company_name']}*\n"
-                f"След. звонок: {data.get('next_call_date', 'Не указан')}\n\n"
-                "Что дальше?",
-                parse_mode="Markdown",
-                reply_markup=get_main_menu()
-            )
+            # Проверяем режим "Текущая задача"
+            if data.get('is_task_flow'):
+                # Не очищаем state полностью, чтобы сохранить task_index
+                # Но нам нужно вернуться в логику tasks.py
+                # Просто показываем кнопку "Следующая"
+                
+                kb = InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="➡️ Следующая задача", callback_data="task_next")],
+                    [InlineKeyboardButton(text="🔙 Главное меню", callback_data="main_menu")]
+                ])
+                
+                await message.answer(
+                    "✅ Данные сохранены! Переходим к следующему?",
+                    reply_markup=kb
+                )
+                # Важно: не делаем state.clear(), но и не оставляем мусор
+                # В tasks.py мы ожидаем, что state хранит task_index.
+                # Здесь мы в state RepeatCallStates. 
+                # Лучше не очищать, tasks.py сам разберется или перезапишет.
+                # Но task_index мы потеряли при переходе в RepeatCallStates?
+                # Нет, FSMContext хранит данные пока не clear().
+                # Мы делали update_data(is_task_flow=True). task_index должен был остаться, если мы не делали clear().
+                
+                # В repeat_call мы делали set_state, это не стирает данные.
+                # Значит task_index там лежит.
+                
+            else:
+                await message.answer(
+                    "✅ Данные повторного звонка сохранены!\n\n"
+                    f"Компания: *{data['company_name']}*\n"
+                    f"След. звонок: {data.get('next_call_date', 'Не указан')}\n\n"
+                    "Что дальше?",
+                    parse_mode="Markdown",
+                    reply_markup=get_main_menu()
+                )
+                await state.clear()
+
         else:
             await message.answer(
                 "⚠️ Данные сохранены локально, но возникла ошибка при обновлении Google Sheets.\n"
                 "Обратитесь к администратору.",
                 reply_markup=get_main_menu()
             )
+            if not data.get('is_task_flow'):
+                await state.clear()
+                
     except Exception as e:
         logger.error(f"Error updating Google Sheets: {e}")
         await message.answer(
@@ -367,5 +403,5 @@ async def save_repeat_call(message: Message, state: FSMContext, session: AsyncSe
             "Данные сохранены локально.",
             reply_markup=get_main_menu()
         )
-    
-    await state.clear()
+        if not data.get('is_task_flow'):
+            await state.clear()

@@ -33,3 +33,9 @@ class AdminStates(StatesGroup):
 class AIInsightStates(StatesGroup):
     """Состояния для AI-инфоповодов по звонкам"""
     waiting_for_inn = State()
+
+
+class TaskStates(StatesGroup):
+    """Состояния для режима 'Текущая задача'"""
+    viewing_task = State()  # Просмотр карточки задачи
+    processing_call = State() # Обработка звонка (ввод комментария)
