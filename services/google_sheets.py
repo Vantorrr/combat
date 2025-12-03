@@ -457,7 +457,11 @@ class GoogleSheetsService:
                             today_calls.append({
                                 'company_name': row[0] if len(row) > 0 else 'Не указано',
                                 'inn': row[1] if len(row) > 1 else 'Не указано',
+                                'contact_name': row[2] if len(row) > 2 else '',
                                 'phone': row[3] if len(row) > 3 else 'Не указано',
+                                'comment': row[5] if len(row) > 5 else '',
+                                'revenue': row[7] if len(row) > 7 else '',
+                                'gov_contracts': row[13] if len(row) > 13 else '',
                             })
                             
             return today_calls
