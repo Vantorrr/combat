@@ -5,13 +5,13 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from loguru import logger
 from datetime import datetime
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.states.call_states import TaskStates, RepeatCallStates
 from services.google_sheets import get_google_sheets_service
 from services.datanewton_api import datanewton_api
 from services.ai_advisor import generate_ai_notification
-from database.models import User, CallSession
-from database.session import async_session
+from models.database import Manager, CallSession
 from config import settings
 
 router = Router()
@@ -31,7 +31,7 @@ def get_task_keyboard(inn: str) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 @router.callback_query(F.data == "next_task")
-async def start_tasks_flow(callback: types.CallbackQuery, state: FSMContext):
+async def start_tasks_flow(callback: types.CallbackQuery, state: FSMContext, session: AsyncSession):
     """Запуск режима 'Текущая задача'"""
     await callback.answer()
     
@@ -39,10 +39,10 @@ async def start_tasks_flow(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()
     await state.update_data(task_index=0)
     
-    await show_next_task(callback.message, state, callback.from_user.id)
+    await show_next_task(callback.message, state, callback.from_user.id, session)
 
 @router.callback_query(F.data == "task_next")
-async def next_task_handler(callback: types.CallbackQuery, state: FSMContext):
+async def next_task_handler(callback: types.CallbackQuery, state: FSMContext, session: AsyncSession):
     """Переход к следующей задаче"""
     await callback.answer()
     
@@ -50,24 +50,24 @@ async def next_task_handler(callback: types.CallbackQuery, state: FSMContext):
     current_index = data.get("task_index", 0)
     await state.update_data(task_index=current_index + 1)
     
-    await show_next_task(callback.message, state, callback.from_user.id)
+    await show_next_task(callback.message, state, callback.from_user.id, session)
 
-async def show_next_task(message: types.Message, state: FSMContext, user_id: int):
+async def show_next_task(message: types.Message, state: FSMContext, user_id: int, session: AsyncSession):
     """Показать следующую задачу из списка на сегодня"""
     
     # 1. Ищем sheet_id пользователя
-    async with async_session() as session:
-        result = await session.execute(select(User).where(User.telegram_id == user_id))
-        user = result.scalar_one_or_none()
+    # Используем переданную сессию
+    result = await session.execute(select(Manager).where(Manager.telegram_id == user_id))
+    manager = result.scalar_one_or_none()
         
-    if not user or not user.google_sheet_id:
+    if not manager or not manager.google_sheet_id:
         await message.edit_text("❌ Ваша таблица не привязана. Обратитесь к администратору.")
         return
 
     google_sheets_service = get_google_sheets_service()
     
     # 2. Получаем список звонков на сегодня
-    today_calls = await google_sheets_service.get_today_calls(user.google_sheet_id)
+    today_calls = await google_sheets_service.get_today_calls(manager.google_sheet_id)
     
     data = await state.get_data()
     current_index = data.get("task_index", 0)
@@ -100,7 +100,7 @@ async def show_next_task(message: types.Message, state: FSMContext, user_id: int
     await message.edit_text(f"⏳ Загружаю информацию по компании (ИНН: {inn})...")
 
     # 4. Загружаем полные данные из таблицы
-    company_data = await google_sheets_service.find_company_by_inn(user.google_sheet_id, inn)
+    company_data = await google_sheets_service.find_company_by_inn(manager.google_sheet_id, inn)
     
     if not company_data:
         # Если вдруг не нашли (странно, но бывает)
@@ -109,7 +109,7 @@ async def show_next_task(message: types.Message, state: FSMContext, user_id: int
             f"Пропускаю...",
         )
         await state.update_data(task_index=current_index + 1)
-        await show_next_task(message, state, user_id)
+        await show_next_task(message, state, user_id, session)
         return
 
     # 5. Формируем карточку
@@ -136,16 +136,7 @@ async def show_next_task(message: types.Message, state: FSMContext, user_id: int
     
     sent_msg = await message.edit_text(info_text, reply_markup=kb, parse_mode="HTML")
     
-    # 6. Генерируем и досылаем AI подсказку (фоном, чтобы не ждать)
-    # Можно было бы отправить отдельным сообщением, но тогда "кнопки" уедут вверх.
-    # Поэтому лучше отправить AI отдельным сообщением НИЖЕ, или обновить это.
-    # Обновлять долго. Отправим AI отдельным сообщением, а кнопки прикрепим к нему?
-    # Нет, кнопки должны быть под карточкой.
-    
-    # Попробуем сгенерировать AI быстро (или пропустить если долго)
-    # Для MVP: покажем AI отдельным сообщением, а кнопки продублируем?
-    # Или просто пришлем AI текст вторым сообщением без кнопок.
-    
+    # 6. Генерируем и досылаем AI подсказку
     if settings.openai_api_key:
         try:
             # Получаем данные DataNewton
@@ -181,20 +172,14 @@ async def show_next_task(message: types.Message, state: FSMContext, user_id: int
     await state.set_state(TaskStates.viewing_task)
     await state.update_data(
         current_inn=inn, 
-        manager_sheet_id=user.google_sheet_id,
+        manager_sheet_id=manager.google_sheet_id,
         company_name=company_name
     )
 
 @router.callback_query(F.data.startswith("task_done:"))
-async def task_done_handler(callback: types.CallbackQuery, state: FSMContext):
+async def task_done_handler(callback: types.CallbackQuery, state: FSMContext, session: AsyncSession):
     """Пользователь нажал 'Звонок совершен'"""
     inn = callback.data.split(":")[1]
-    
-    # Переходим в режим "Повторный звонок" (т.к. это уже существующий клиент)
-    # Мы можем переиспользовать логику RepeatCall, но нам нужно предзаполнить состояние
-    
-    # Импортируем роутер повторного звонка чтобы вызвать его функции?
-    # Или просто переводим состояние в waiting_for_comment как в repeat_call
     
     data = await state.get_data()
     company_name = data.get("company_name", "Компания")
@@ -221,4 +206,3 @@ async def task_done_handler(callback: types.CallbackQuery, state: FSMContext):
         await callback.message.delete()
     except:
         pass
-
