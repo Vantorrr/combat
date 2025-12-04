@@ -1,5 +1,5 @@
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -271,11 +271,6 @@ async def skip_repeat_next_call_date(callback: CallbackQuery, state: FSMContext,
     await save_repeat_call(callback.message, state, session)
     await callback.answer()
 
-
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-
-# ... imports ...
-
 async def save_repeat_call(message: Message, state: FSMContext, session: AsyncSession):
     """Сохранить данные повторного звонка"""
     data = await state.get_data()
@@ -397,11 +392,26 @@ async def save_repeat_call(message: Message, state: FSMContext, session: AsyncSe
                 await state.clear()
                 
     except Exception as e:
+        import traceback
         logger.error(f"Error updating Google Sheets: {e}")
-        await message.answer(
-            "⚠️ Произошла ошибка при обновлении таблицы.\n"
-            "Данные сохранены локально.",
-            reply_markup=get_main_menu()
-        )
-        if not data.get('is_task_flow'):
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        
+        if data.get('is_task_flow'):
+            # В режиме задач не теряем контекст
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔄 Повторить", callback_data=f"task_done:{data.get('inn', '')}")],
+                [InlineKeyboardButton(text="➡️ Следующая задача", callback_data="task_next")],
+                [InlineKeyboardButton(text="🔙 Главное меню", callback_data="main_menu")]
+            ])
+            await message.answer(
+                f"⚠️ Ошибка при обновлении таблицы: {str(e)[:150]}\n"
+                "Данные сохранены локально.",
+                reply_markup=kb
+            )
+        else:
+            await message.answer(
+                "⚠️ Произошла ошибка при обновлении таблицы.\n"
+                "Данные сохранены локально.",
+                reply_markup=get_main_menu()
+            )
             await state.clear()

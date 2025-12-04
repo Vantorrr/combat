@@ -106,9 +106,12 @@ async def show_today_calls(callback: CallbackQuery, session: AsyncSession):
             )
     
     except Exception as e:
+        import traceback
         logger.error(f"Error getting today calls: {e}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
         await callback.message.edit_text(
-            "❌ Произошла ошибка при загрузке звонков.\n"
+            f"❌ Произошла ошибка при загрузке звонков.\n"
+            f"Детали: {str(e)[:200]}\n\n"
             "Попробуйте позже или обратитесь к администратору.",
             reply_markup=get_main_menu()
         )
