@@ -1,17 +1,18 @@
+import asyncio
+from datetime import datetime
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 from aiogram import Router, F, types
 from aiogram.fsm.context import FSMContext
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from loguru import logger
-from datetime import datetime
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.states.call_states import TaskStates, RepeatCallStates
 from services.google_sheets import get_google_sheets_service
 from services.datanewton_api import datanewton_api
 from services.ai_advisor import generate_ai_notification
-from models.database import Manager, CallSession
+from models.database import Manager
 from config import settings
 
 router = Router()
@@ -59,7 +60,6 @@ async def show_next_task(message: types.Message, state: FSMContext, user_id: int
     """Показать следующую задачу из списка на сегодня"""
     
     # 1. Ищем sheet_id пользователя
-    # Используем переданную сессию
     result = await session.execute(select(Manager).where(Manager.telegram_id == user_id))
     manager = result.scalar_one_or_none()
         
@@ -121,9 +121,6 @@ async def show_next_task(message: types.Message, state: FSMContext, user_id: int
     phone = company_data.get('phone', 'Не указан')
     last_comment = company_data.get('comment', '')
     
-    # AI Подсказка
-    ai_text = "⏳ Генерация AI-подсказки..."
-    
     # Отправляем основное сообщение
     info_text = (
         f"📞 <b>Задача {current_index + 1} из {len(today_calls)}</b>\n\n"
@@ -139,8 +136,6 @@ async def show_next_task(message: types.Message, state: FSMContext, user_id: int
     
     sent_msg = await message.edit_text(info_text, reply_markup=kb, parse_mode="HTML")
     
-    # AI теперь генерируется по кнопке "🤖 AI инфоповод"
-
     # Сохраняем состояние (включая manager_id и manager_name для save_repeat_call)
     await state.set_state(TaskStates.viewing_task)
     await state.update_data(
@@ -159,44 +154,64 @@ async def task_ai_handler(callback: types.CallbackQuery, state: FSMContext, sess
     
     data = await state.get_data()
     company_name = data.get("company_name", "Компания")
-    
-    # Получаем данные компании из таблицы
-    google_sheets_service = get_google_sheets_service()
-    company_data = await google_sheets_service.find_company_by_inn(data.get("manager_sheet_id"), inn)
-    
-    last_comment = company_data.get('comment', '') if company_data else ''
-    contact_name = company_data.get('contact_name', '') if company_data else ''
+    manager_sheet_id = data.get("manager_sheet_id")
     
     if not settings.openai_api_key:
         await callback.message.answer("⚠️ AI модуль не настроен.")
         return
     
     try:
-        # Получаем данные DataNewton
+        # Получаем данные из таблицы (как базовый источник)
+        google_sheets_service = get_google_sheets_service()
+        company_data = await google_sheets_service.find_company_by_inn(manager_sheet_id, inn)
+        
+        if not company_data:
+            company_data = {}
+
+        last_comment = company_data.get('comment', '')
+        contact_name = company_data.get('contact_name', '')
+
+        # Получаем свежие данные DataNewton
         try:
             fresh = await datanewton_api.get_full_company_data(inn)
         except Exception as e:
             fresh = {}
             logger.warning(f"DataNewton failed: {e}")
         
-        # Fallback на данные из таблицы
-        if not fresh and company_data:
-            fresh = {
-                'revenue': company_data.get('revenue', ''),
-                'revenue_previous': company_data.get('revenue_previous', ''),
-                'net_profit': company_data.get('net_profit', ''),
-            }
-        
+        if not fresh:
+            fresh = {}
+
+        # Собираем данные, отдавая приоритет fresh (DataNewton), затем company_data (Sheet)
+        def get_val(key_fresh, key_sheet=None):
+            return fresh.get(key_fresh) or company_data.get(key_sheet or key_fresh) or ""
+
+        # Формируем аргументы, обязательно передаем keyword-only аргументы
         ai_insight = await generate_ai_notification(
             inn=inn,
             company_name=company_name,
             last_comment=last_comment,
             last_call_date=datetime.now(),
             all_comments=[last_comment] if last_comment else [],
-            revenue=fresh.get('revenue') if fresh else None,
-            net_profit=fresh.get('net_profit') if fresh else None,
             contact_name=contact_name,
-            planned_call_date=datetime.now()
+            planned_call_date=datetime.now(),
+            
+            # Обязательные поля (keyword-only)
+            okved_code=get_val('okved', 'okved_main'),
+            okved_name=get_val('okved_name', 'okpd_name'), # В таблице иногда okpd_name используется как описание деятельности
+            region=get_val('region'), # В таблице региона может не быть, будет ""
+            
+            # Опциональные поля (для лучшего анализа)
+            revenue=get_val('revenue'),
+            revenue_previous=get_val('revenue_previous'),
+            net_profit=get_val('net_profit'),
+            capital=get_val('capital'),
+            assets=get_val('assets'),
+            debit=get_val('debit'),
+            credit=get_val('credit'),
+            gov_contracts=get_val('gov_contracts'),
+            arbitration_open_count=str(fresh.get('arbitration_open_count') or company_data.get('arbitration') or '0'),
+            arbitration_open_sum=str(fresh.get('arbitration_open_sum') or '0'),
+            arbitration_last_doc_date=str(fresh.get('arbitration_last_doc_date') or '')
         )
         
         await callback.message.answer(f"🤖 <b>AI-Анализ:</b>\n\n{ai_insight}", parse_mode="HTML")
@@ -204,7 +219,6 @@ async def task_ai_handler(callback: types.CallbackQuery, state: FSMContext, sess
     except Exception as e:
         logger.error(f"AI generation failed: {e}")
         await callback.message.answer(f"❌ Ошибка генерации AI-анализа:\n{e}")
-
 
 @router.callback_query(F.data.startswith("task_done:"))
 async def task_done_handler(callback: types.CallbackQuery, state: FSMContext, session: AsyncSession):
