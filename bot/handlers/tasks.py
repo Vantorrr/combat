@@ -203,7 +203,7 @@ async def task_ai_handler(callback: types.CallbackQuery, state: FSMContext, sess
         
     except Exception as e:
         logger.error(f"AI generation failed: {e}")
-        await callback.message.answer("❌ Ошибка генерации AI-анализа.")
+        await callback.message.answer(f"❌ Ошибка генерации AI-анализа:\n{e}")
 
 
 @router.callback_query(F.data.startswith("task_done:"))

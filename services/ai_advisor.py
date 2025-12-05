@@ -323,6 +323,14 @@ async def generate_ai_notification(
         )
         return completion.choices[0].message.content.strip()
 
+    try:
+        return await asyncio.to_thread(_call_openai)
+    except Exception as e:
+        logger.error(f"AI generation error: {e}")
+        if "insufficient_quota" in str(e) or "rate_limit_exceeded" in str(e):
+            return "⚠️ Ошибка: Закончились средства на счету OpenAI или превышен лимит запросов."
+        raise e
+
 async def generate_daily_plan(calls_data: List[dict]) -> str:
     """
     Генерирует план прозвона на день, разбивая клиентов на группы приоритета.
