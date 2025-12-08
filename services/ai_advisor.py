@@ -389,3 +389,37 @@ async def generate_daily_plan(calls_data: List[dict]) -> str:
         logger.error(f"Error generating daily plan: {e}")
         return "❌ Не удалось сгенерировать план. Попробуйте позже."
 
+
+async def ask_ai_advisor(question: str, context_data: str) -> str:
+    """
+    Отвечает на произвольный вопрос пользователя в контексте компании.
+    """
+    client = _get_openai_client()
+    if client is None:
+        return "AI модуль отключен."
+
+    system_prompt = (
+        "Ты опытный бизнес-ассистент и консультант по продажам. "
+        "Пользователь задает вопрос о компании, с которой работает. "
+        "У тебя есть контекст (данные компании, финансы, история). "
+        "Отвечай кратко, по делу и с точки зрения продаж (как продать, как говорить, на что надавить). "
+        "Не лей воду."
+    )
+
+    def _call_openai() -> str:
+        completion = client.chat.completions.create(
+            model=settings.openai_model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"КОНТЕКСТ КОМПАНИИ:\n{context_data}\n\nВОПРОС ПОЛЬЗОВАТЕЛЯ:\n{question}"},
+            ],
+            temperature=0.7,
+            max_tokens=500,
+        )
+        return completion.choices[0].message.content.strip()
+
+    try:
+        return await asyncio.to_thread(_call_openai)
+    except Exception as e:
+        logger.error(f"AI chat error: {e}")
+        return f"Ошибка при обращении к AI: {str(e)[:100]}"

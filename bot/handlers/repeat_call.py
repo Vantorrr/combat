@@ -215,7 +215,23 @@ async def process_repeat_inn(message: Message, state: FSMContext, session: Async
                 planned_call_date=datetime.now(),
                 contact_name=contact_name,
             )
-            await message.answer(ai_text)
+            
+            # Сохраняем расширенные данные для чата
+            company_data_full = {
+                'revenue': fresh.get('revenue') if fresh else sheet_company.get('revenue'),
+                'net_profit': fresh.get('net_profit') if fresh else sheet_company.get('net_profit'),
+                'gov_contracts': fresh.get('gov_contracts') if fresh else sheet_company.get('gov_contracts'),
+                'region': fresh.get('region') if fresh else '',
+                'okved_code': fresh.get('okved') if fresh else sheet_company.get('okved_main'),
+                'okved_name': fresh.get('okved_name') if fresh else sheet_company.get('okpd_name'),
+            }
+            await state.update_data(company_data=company_data_full)
+            
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="💬 Спросить ИИ (Чат)", callback_data="ask_ai")]
+            ])
+            
+            await message.answer(ai_text, reply_markup=kb)
         except Exception as e:
             logger.warning(f"[repeat_call] AI pre-call notification failed: {e}")
     

@@ -39,3 +39,8 @@ class TaskStates(StatesGroup):
     """Состояния для режима 'Текущая задача'"""
     viewing_task = State()  # Просмотр карточки задачи
     processing_call = State() # Обработка звонка (ввод комментария)
+
+
+class AIChatStates(StatesGroup):
+    """Состояния для общения с AI"""
+    waiting_for_question = State()

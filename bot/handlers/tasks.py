@@ -213,8 +213,23 @@ async def task_ai_handler(callback: types.CallbackQuery, state: FSMContext, sess
             arbitration_open_sum=str(fresh.get('arbitration_open_sum') or '0'),
             arbitration_last_doc_date=str(fresh.get('arbitration_last_doc_date') or '')
         )
+        # Сохраняем данные компании в state, чтобы AI чат мог их использовать
+        company_data_full = {
+            'revenue': get_val('revenue'),
+            'net_profit': get_val('net_profit'),
+            'gov_contracts': get_val('gov_contracts'),
+            'region': get_val('region'),
+            'okved_code': get_val('okved', 'okved_main'),
+            'okved_name': get_val('okved_name', 'okpd_name'),
+        }
+        await state.update_data(company_data=company_data_full)
         
-        await callback.message.answer(f"🤖 <b>AI-Анализ:</b>\n\n{ai_insight}", parse_mode="HTML")
+        # Клавиатура "Спросить AI"
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="💬 Спросить ИИ (Чат)", callback_data="ask_ai")]
+        ])
+        
+        await callback.message.answer(f"🤖 <b>AI-Анализ:</b>\n\n{ai_insight}", parse_mode="HTML", reply_markup=kb)
         
     except Exception as e:
         logger.error(f"AI generation failed: {e}")

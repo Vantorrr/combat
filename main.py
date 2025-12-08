@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
 from models.database import init_db, get_session, Manager
-from bot.handlers import start, new_call, repeat_call, admin, utils, sheet_info, csv_import, ai_advisor, auth, tasks
+    from bot.handlers import start, new_call, repeat_call, admin, utils, sheet_info, csv_import, ai_advisor, auth, tasks, ai_chat
 from services.google_sheets import get_google_sheets_service
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
@@ -206,6 +206,7 @@ async def main():
     dp.include_router(csv_import.router)
     dp.include_router(ai_advisor.router)
     dp.include_router(tasks.router)
+    dp.include_router(ai_chat.router)
     # dp.include_router(auth.router)  # Auth только для админских целей, скрываем из main
     # Debug роутер временно отключен
     # dp.include_router(debug.router)
