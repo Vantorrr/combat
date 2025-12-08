@@ -69,23 +69,40 @@ async def show_today_calls(callback: CallbackQuery, session: AsyncSession):
         today_calls = await google_sheets_service.get_today_calls(manager.google_sheet_id)
         
         if today_calls:
-            message_text = "📅 *Звонки на сегодня:*\n\n"
+            # Формируем полный текст сообщения
+            full_text = "📅 *Звонки на сегодня:*\n\n"
             
             for i, call in enumerate(today_calls, 1):
-                message_text += f"{i}. *{call.get('company_name', 'Не указано')}*\n"
-                message_text += f"   ИНН: {call.get('inn', 'Не указано')}\n"
+                entry = f"{i}. *{call.get('company_name', 'Не указано')}*\n"
+                entry += f"   ИНН: {call.get('inn', 'Не указано')}\n"
                 
                 contact_name = call.get('contact_name')
                 if contact_name:
-                    message_text += f"   Контакт: {contact_name}\n"
+                    entry += f"   Контакт: {contact_name}\n"
                 
                 phone = call.get('phone')
                 if phone:
-                    message_text += f"   Телефон: {phone}\n"
+                    entry += f"   Телефон: {phone}\n"
                 
-                message_text += "\n"
+                entry += "\n"
+                full_text += entry
             
-            message_text += f"\nВсего звонков: {len(today_calls)}"
+            full_text += f"\nВсего звонков: {len(today_calls)}"
+            
+            # Функция для разбивки текста на части по ~4000 символов
+            def split_text(text, max_len=4000):
+                chunks = []
+                while len(text) > max_len:
+                    # Ищем последний перенос строки перед max_len, чтобы не резать посередине
+                    split_idx = text.rfind('\n', 0, max_len)
+                    if split_idx == -1:
+                        split_idx = max_len
+                    chunks.append(text[:split_idx])
+                    text = text[split_idx:].lstrip()
+                chunks.append(text)
+                return chunks
+
+            chunks = split_text(full_text)
             
             # Клавиатура с AI кнопкой
             kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -93,11 +110,28 @@ async def show_today_calls(callback: CallbackQuery, session: AsyncSession):
                 [InlineKeyboardButton(text="🔙 Главное меню", callback_data="main_menu")]
             ])
             
-            await callback.message.edit_text(
-                message_text,
-                parse_mode="Markdown",
-                reply_markup=kb
-            )
+            if len(chunks) == 1:
+                await callback.message.edit_text(
+                    chunks[0],
+                    parse_mode="Markdown",
+                    reply_markup=kb
+                )
+            else:
+                # Если сообщений несколько:
+                # 1. Редактируем исходное сообщение (первая часть)
+                await callback.message.edit_text(chunks[0], parse_mode="Markdown")
+                
+                # 2. Отправляем остальные части новыми сообщениями
+                for i, chunk in enumerate(chunks[1:]):
+                    # Клавиатуру прикрепляем только к последнему сообщению
+                    is_last = (i == len(chunks) - 2) # chunks[1:] has len-1 elements. last index is len-2.
+                    current_kb = kb if is_last else None
+                    
+                    await callback.message.answer(
+                        chunk,
+                        parse_mode="Markdown",
+                        reply_markup=current_kb
+                    )
         else:
             await callback.message.edit_text(
                 "📅 На сегодня запланированных звонков нет.\n\n"
