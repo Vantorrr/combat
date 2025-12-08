@@ -507,3 +507,45 @@ async def select_update_manager(callback: CallbackQuery, state: FSMContext, sess
         reply_markup=get_admin_menu()
     )
     await state.clear()
+
+
+@router.message(F.text == "/test_missed_calls")
+async def test_missed_calls_report(message: Message, session: AsyncSession):
+    """Ручной запуск проверки недозвонов (только для админов)"""
+    user_id = message.from_user.id
+    
+    if user_id not in settings.admin_ids_list:
+        await message.answer("❌ Недостаточно прав")
+        return
+    
+    await message.answer("🔍 Запускаю проверку недозвонов...")
+    
+    try:
+        google_sheets = get_google_sheets_service()
+        result = await session.execute(select(Manager).where(Manager.is_active == True))
+        managers = result.scalars().all()
+        
+        report_lines = [f"📊 *Отчет о недозвонах*\n\nВсего менеджеров: {len(managers)}\n"]
+        
+        for manager in managers:
+            if not manager.google_sheet_id:
+                report_lines.append(f"• {manager.full_name}: ⚠️ Нет sheet_id")
+                continue
+            
+            try:
+                missed_calls = await google_sheets.get_missed_calls(manager.google_sheet_id)
+                if missed_calls:
+                    report_lines.append(f"• {manager.full_name}: ❌ {len(missed_calls)} недозвонов")
+                else:
+                    report_lines.append(f"• {manager.full_name}: ✅ Все звонки совершены")
+            except Exception as e:
+                report_lines.append(f"• {manager.full_name}: ⚠️ Ошибка: {str(e)[:50]}")
+        
+        report_text = "\n".join(report_lines)
+        await message.answer(report_text, parse_mode="Markdown")
+        
+    except Exception as e:
+        import traceback
+        logger.error(f"Test missed calls failed: {e}")
+        logger.error(traceback.format_exc())
+        await message.answer(f"❌ Ошибка: {str(e)[:200]}")

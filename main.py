@@ -3,6 +3,7 @@ import sys
 from loguru import logger
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
@@ -45,18 +46,16 @@ async def on_startup(bot: Bot):
                 google_sheets = get_google_sheets_service()
                 # Получаем список менеджеров и шлём напоминания
                 async for session in get_session():
-                    result = await session.execute(Manager.__table__.select())
-                    rows = result.fetchall()
-                    for row in rows:
-                        sheet_id = row.google_sheet_id if hasattr(row, 'google_sheet_id') else None
-                        chat_id = row.telegram_id if hasattr(row, 'telegram_id') else None
-                        if not sheet_id or not chat_id:
+                    result = await session.execute(select(Manager))
+                    managers = result.scalars().all()
+                    for manager in managers:
+                        if not manager.google_sheet_id or not manager.telegram_id:
                             continue
-                        today_calls = await google_sheets.get_today_calls(sheet_id)
+                        today_calls = await google_sheets.get_today_calls(manager.google_sheet_id)
                         if today_calls:
                             try:
                                 await bot.send_message(
-                                    chat_id,
+                                    manager.telegram_id,
                                     f"📅 Напоминание: на сегодня запланировано звонков: {len(today_calls)}"
                                 )
                             except Exception:
@@ -72,17 +71,25 @@ async def on_startup(bot: Bot):
                 google_sheets = get_google_sheets_service()
                 async for session in get_session():
                     # Получаем всех активных менеджеров
-                    result = await session.execute(Manager.__table__.select().where(Manager.is_active == True))
+                    result = await session.execute(select(Manager).where(Manager.is_active == True))
                     managers = result.scalars().all()
+                    logger.info(f"Found {len(managers)} active managers for missed calls report")
                     
                     for manager in managers:
                         if not manager.google_sheet_id:
+                            logger.warning(f"Manager {manager.full_name} has no google_sheet_id, skipping")
                             continue
                             
                         # 1. Проверяем таблицу менеджера на недозвоны
-                        missed_calls = await google_sheets.get_missed_calls(manager.google_sheet_id)
+                        try:
+                            missed_calls = await google_sheets.get_missed_calls(manager.google_sheet_id)
+                            logger.info(f"Manager {manager.full_name}: {len(missed_calls)} missed calls")
+                        except Exception as e:
+                            logger.error(f"Failed to get missed calls for {manager.full_name}: {e}")
+                            continue
                         
                         if not missed_calls:
+                            logger.debug(f"No missed calls for {manager.full_name}, skipping notifications")
                             continue
                             
                         # 2. Формируем сообщение для менеджера
@@ -101,6 +108,7 @@ async def on_startup(bot: Bot):
                         if manager.telegram_id:
                             try:
                                 await bot.send_message(manager.telegram_id, msg_manager, parse_mode="Markdown")
+                                logger.info(f"Sent missed calls report to manager {manager.full_name}")
                             except Exception as e:
                                 logger.warning(f"Could not send report to manager {manager.full_name}: {e}")
 
@@ -115,13 +123,16 @@ async def on_startup(bot: Bot):
                         for admin_id in settings.admin_ids_list:
                             try:
                                 await bot.send_message(admin_id, msg_admin, parse_mode="Markdown")
-                            except Exception:
-                                pass
+                                logger.info(f"Sent missed calls report to admin {admin_id} for manager {manager.full_name}")
+                            except Exception as e:
+                                logger.warning(f"Could not send report to admin {admin_id}: {e}")
                                 
                     await session.close()
-                logger.info("Missed call reports finished")
+                logger.info("Missed call reports finished successfully")
             except Exception as e:
+                import traceback
                 logger.error(f"Missed call report job failed: {e}")
+                logger.error(f"Traceback: {traceback.format_exc()}")
 
         # Несколько времен напоминаний в день (утро/день)
         for tm in settings.reminder_times_list:
