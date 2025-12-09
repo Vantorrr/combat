@@ -69,65 +69,71 @@ async def on_startup(bot: Bot):
             try:
                 logger.info("Starting missed call reports...")
                 google_sheets = get_google_sheets_service()
+                
+                admin_report_lines = []
+                has_any_missed_calls = False
+                
                 async for session in get_session():
                     # Получаем всех активных менеджеров
                     result = await session.execute(select(Manager).where(Manager.is_active == True))
                     managers = result.scalars().all()
                     logger.info(f"Found {len(managers)} active managers for missed calls report")
                     
+                    admin_report_lines.append(f"📊 *Вечерний отчет о недозвонах*\n")
+                    
                     for manager in managers:
                         if not manager.google_sheet_id:
                             logger.warning(f"Manager {manager.full_name} has no google_sheet_id, skipping")
+                            admin_report_lines.append(f"• {manager.full_name}: ⚠️ Нет таблицы")
                             continue
                             
                         # 1. Проверяем таблицу менеджера на недозвоны
                         try:
                             missed_calls = await google_sheets.get_missed_calls(manager.google_sheet_id)
                             logger.info(f"Manager {manager.full_name}: {len(missed_calls)} missed calls")
+                            
+                            if missed_calls:
+                                has_any_missed_calls = True
+                                admin_report_lines.append(f"• {manager.full_name}: ❌ {len(missed_calls)} недозвонов")
+                                
+                                # Отправляем уведомление менеджеру
+                                msg_manager = (
+                                    f"⚠️ *Отчет о недозвонах*\n\n"
+                                    f"Сегодня вы пропустили {len(missed_calls)} запланированных звонков:\n"
+                                )
+                                for call in missed_calls[:10]: # Показываем первые 10
+                                    msg_manager += f"- {call['company_name']} (план: {call['planned_date']})\n"
+                                if len(missed_calls) > 10:
+                                    msg_manager += f"... и еще {len(missed_calls) - 10} компаний."
+                                
+                                msg_manager += "\nНе забудьте позвонить им завтра!"
+                                
+                                if manager.telegram_id:
+                                    try:
+                                        await bot.send_message(manager.telegram_id, msg_manager, parse_mode="Markdown")
+                                        logger.info(f"Sent missed calls report to manager {manager.full_name}")
+                                    except Exception as e:
+                                        logger.warning(f"Could not send report to manager {manager.full_name}: {e}")
+                            else:
+                                admin_report_lines.append(f"• {manager.full_name}: ✅ Все звонки совершены")
+                                
                         except Exception as e:
                             logger.error(f"Failed to get missed calls for {manager.full_name}: {e}")
+                            admin_report_lines.append(f"• {manager.full_name}: ⚠️ Ошибка проверки")
                             continue
-                        
-                        if not missed_calls:
-                            logger.debug(f"No missed calls for {manager.full_name}, skipping notifications")
-                            continue
-                            
-                        # 2. Формируем сообщение для менеджера
-                        msg_manager = (
-                            f"⚠️ *Отчет о недозвонах*\n\n"
-                            f"Сегодня вы пропустили {len(missed_calls)} запланированных звонков:\n"
-                        )
-                        for call in missed_calls[:10]: # Показываем первые 10
-                            msg_manager += f"- {call['company_name']} (план: {call['planned_date']})\n"
-                        if len(missed_calls) > 10:
-                            msg_manager += f"... и еще {len(missed_calls) - 10} компаний."
-                        
-                        msg_manager += "\nНе забудьте позвонить им завтра!"
-                        
-                        # Шлем менеджеру
-                        if manager.telegram_id:
-                            try:
-                                await bot.send_message(manager.telegram_id, msg_manager, parse_mode="Markdown")
-                                logger.info(f"Sent missed calls report to manager {manager.full_name}")
-                            except Exception as e:
-                                logger.warning(f"Could not send report to manager {manager.full_name}: {e}")
-
-                        # 3. Формируем сообщение для админов
-                        msg_admin = (
-                            f"📊 *Контроль недозвонов*\n"
-                            f"Менеджер: {manager.full_name}\n"
-                            f"Пропущено звонков: {len(missed_calls)}\n"
-                        )
-                        
-                        # Шлем всем админам
+                    
+                    # Отправляем сводный отчет админам
+                    if admin_report_lines:
+                        admin_msg = "\n".join(admin_report_lines)
                         for admin_id in settings.admin_ids_list:
                             try:
-                                await bot.send_message(admin_id, msg_admin, parse_mode="Markdown")
-                                logger.info(f"Sent missed calls report to admin {admin_id} for manager {manager.full_name}")
+                                await bot.send_message(admin_id, admin_msg, parse_mode="Markdown")
+                                logger.info(f"Sent consolidated report to admin {admin_id}")
                             except Exception as e:
-                                logger.warning(f"Could not send report to admin {admin_id}: {e}")
+                                logger.warning(f"Could not send consolidated report to admin {admin_id}: {e}")
                                 
                     await session.close()
+                    
                 logger.info("Missed call reports finished successfully")
             except Exception as e:
                 import traceback
