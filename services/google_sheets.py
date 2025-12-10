@@ -420,20 +420,27 @@ class GoogleSheetsService:
     async def get_today_calls(self, sheet_id: str) -> List[Dict[str, Any]]:
         """Получить список звонков, запланированных на сегодня."""
         try:
+            # Учитываем таймзону
+            try:
+                from zoneinfo import ZoneInfo
+                tz = ZoneInfo(getattr(settings, 'timezone', 'Europe/Moscow'))
+                today_date = datetime.now(tz).date()
+            except Exception:
+                today_date = datetime.now().date()
+            
+            logger.info(f"Fetching calls for {sheet_id} on date {today_date}")
+
             result = self.service.spreadsheets().values().get(
                 spreadsheetId=sheet_id,
                 range='A:AZ'
             ).execute()
             values = result.get('values', [])
             
-            # Получаем сегодняшнюю дату как объект date
-            today_date = datetime.now().date()
-            
             today_calls = []
             
             # Пропускаем заголовок
             if len(values) > 1:
-                for row in values[1:]:
+                for i, row in enumerate(values[1:], 2):
                     # ИНН - колонка B (index 1), Дата след. звонка - колонка E (index 4)
                     if len(row) > 4:
                         next_call_date_str = row[4].strip()
@@ -463,7 +470,8 @@ class GoogleSheetsService:
                                 'revenue': row[7] if len(row) > 7 else '',
                                 'gov_contracts': row[13] if len(row) > 13 else '',
                             })
-                            
+            
+            logger.info(f"Found {len(today_calls)} calls for today")
             return today_calls
             
         except Exception as e:
