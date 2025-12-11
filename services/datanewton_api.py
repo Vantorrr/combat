@@ -97,11 +97,15 @@ class DataNewtonAPI:
                         email = contact.get("value", "")
                         break
             
+            # Получаем названия
+            short_name = company.get("company_names", {}).get("short_name", "")
+            full_name = company.get("company_names", {}).get("full_name", "")
+            
             return {
                 "inn": raw_data.get("inn"),
                 "ogrn": raw_data.get("ogrn"),  # Нужен для governmentContractsStat
-                "name": company.get("company_names", {}).get("short_name", ""),
-                "full_name": company.get("company_names", {}).get("full_name", ""),
+                "name": short_name if short_name else full_name,
+                "full_name": full_name,
                 "okved": main_okved,
                 "okved_name": okved_name,
                 "revenue": "",  # Требует отдельный запрос
