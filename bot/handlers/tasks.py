@@ -47,12 +47,22 @@ async def start_tasks_flow(callback: types.CallbackQuery, state: FSMContext, ses
 
 @router.callback_query(F.data == "task_next")
 async def next_task_handler(callback: types.CallbackQuery, state: FSMContext, session: AsyncSession):
-    """Переход к следующей задаче"""
+    """Переход к следующей задаче (пропуск)"""
     await callback.answer()
     
     data = await state.get_data()
     current_index = data.get("task_index", 0)
     await state.update_data(task_index=current_index + 1)
+    
+    await show_next_task(callback.message, state, callback.from_user.id, session)
+
+@router.callback_query(F.data == "task_completed")
+async def task_completed_handler(callback: types.CallbackQuery, state: FSMContext, session: AsyncSession):
+    """Переход к следующей задаче после выполнения (без увеличения индекса, т.к. список сдвигается)"""
+    await callback.answer()
+    
+    # Индекс НЕ увеличиваем, так как выполненная задача исчезает из списка, 
+    # и на её место встает следующая
     
     await show_next_task(callback.message, state, callback.from_user.id, session)
 
@@ -87,30 +97,48 @@ async def show_next_task(message: types.Message, state: FSMContext, user_id: int
 
     # Если дошли до конца списка - начинаем сначала (или говорим что всё)
     if current_index >= len(today_calls):
-        await message.edit_text(
-            "✅ Все запланированные на сегодня звонки просмотрены!",
-             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="🔄 Начать сначала", callback_data="next_task")],
-                [InlineKeyboardButton(text="🔙 Главное меню", callback_data="main_menu")]
-            ])
-        )
+        # Если были пропущенные задачи (индекс > 0), предложим начать сначала
+        if len(today_calls) > 0:
+            await message.edit_text(
+                "✅ Вы просмотрели все задачи в списке!\n"
+                "Остались пропущенные задачи. Начать сначала?",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="🔄 Начать сначала", callback_data="next_task")],
+                    [InlineKeyboardButton(text="🔙 Главное меню", callback_data="main_menu")]
+                ])
+            )
+        else:
+            await message.edit_text(
+                "✅ Все запланированные на сегодня звонки выполнены!",
+                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="🔙 Главное меню", callback_data="main_menu")]
+                ])
+            )
         return
 
     # 3. Берем задачу
     task = today_calls[current_index]
     inn = task.get('inn', '').replace("'", "") # Убираем апостроф если есть
     
-    await message.edit_text(f"⏳ Загружаю информацию по компании (ИНН: {inn})...")
+    # При edit_text иногда бывает, что сообщение не изменилось - ловим ошибку
+    try:
+        await message.edit_text(f"⏳ Загружаю информацию по компании (ИНН: {inn})...")
+    except Exception:
+        # Если не получилось отредактировать (например, текст тот же), отправляем новое
+        pass
 
     # 4. Загружаем полные данные из таблицы
     company_data = await google_sheets_service.find_company_by_inn(manager.google_sheet_id, inn)
     
     if not company_data:
         # Если вдруг не нашли (странно, но бывает)
-        await message.edit_text(
-            f"⚠️ Ошибка: Компания с ИНН {inn} есть в плане, но не найдена в таблице детально.\n"
-            f"Пропускаю...",
-        )
+        try:
+            await message.edit_text(
+                f"⚠️ Ошибка: Компания с ИНН {inn} есть в плане, но не найдена в таблице детально.\n"
+                f"Пропускаю...",
+            )
+        except:
+            pass
         await state.update_data(task_index=current_index + 1)
         await show_next_task(message, state, user_id, session)
         return
@@ -134,7 +162,11 @@ async def show_next_task(message: types.Message, state: FSMContext, user_id: int
     # Кнопки
     kb = get_task_keyboard(inn)
     
-    sent_msg = await message.edit_text(info_text, reply_markup=kb, parse_mode="HTML")
+    try:
+        sent_msg = await message.edit_text(info_text, reply_markup=kb, parse_mode="HTML")
+    except Exception as e:
+        # Если сообщение устарело или не может быть отредактировано
+        sent_msg = await message.answer(info_text, reply_markup=kb, parse_mode="HTML")
     
     # Сохраняем состояние (включая manager_id и manager_name для save_repeat_call)
     await state.set_state(TaskStates.viewing_task)
@@ -262,7 +294,11 @@ async def task_done_handler(callback: types.CallbackQuery, state: FSMContext, se
     await callback.message.answer(
         "💬 Введите комментарий по результатам звонка:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔙 Отмена", callback_data="next_task")] # Возврат к задаче
+            [InlineKeyboardButton(text="🔙 Отмена", callback_data="task_completed")] # Возврат к задаче (без инкремента, если отменил? нет, тут отмена)
+             # Если отмена - лучше вернуться к просмотру ЭТОЙ же задачи. 
+             # Но callback "task_completed" вызовет show_next_task с текущим индексом.
+             # Если задача не была выполнена (коммент не сохранен), она осталась в списке на том же месте.
+             # Так что task_completed (без инкремента) подойдет.
         ])
     )
     

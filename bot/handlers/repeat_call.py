@@ -368,7 +368,7 @@ async def save_repeat_call(message: Message, state: FSMContext, session: AsyncSe
                 # Просто показываем кнопку "Следующая"
                 
                 kb = InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="➡️ Следующая задача", callback_data="task_next")],
+                    [InlineKeyboardButton(text="➡️ Следующая задача", callback_data="task_completed")],
                     [InlineKeyboardButton(text="🔙 Главное меню", callback_data="main_menu")]
                 ])
                 
@@ -416,7 +416,7 @@ async def save_repeat_call(message: Message, state: FSMContext, session: AsyncSe
             # В режиме задач не теряем контекст
             kb = InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="🔄 Повторить", callback_data=f"task_done:{data.get('inn', '')}")],
-                [InlineKeyboardButton(text="➡️ Следующая задача", callback_data="task_next")],
+                [InlineKeyboardButton(text="➡️ Следующая задача", callback_data="task_completed")],
                 [InlineKeyboardButton(text="🔙 Главное меню", callback_data="main_menu")]
             ])
             await message.answer(
