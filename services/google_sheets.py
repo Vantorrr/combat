@@ -1,6 +1,7 @@
 import os
 import json
 import base64
+import asyncio
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from google.oauth2 import service_account
@@ -149,11 +150,8 @@ class GoogleSheetsService:
         except Exception as e:
             logger.error(f"Failed to set locale for {spreadsheet_id}: {e}")
 
-    async def create_manager_sheet(self, manager_name: str) -> Optional[str]:
-        """
-        Создать новую таблицу для менеджера.
-        Используем создание с нуля (не копирование), чтобы обойти квоту хранилища Service Account.
-        """
+    def _create_manager_sheet_sync(self, manager_name: str) -> Optional[str]:
+        """Синхронная версия создания таблицы для запуска в отдельном потоке"""
         try:
             # 1. Создаем пустую таблицу
             spreadsheet_body = {
@@ -188,22 +186,40 @@ class GoogleSheetsService:
                 logger.info(f"Shared sheet {new_sheet_id} with anyone (writer)")
             except Exception as e:
                 logger.error(f"Failed to share sheet: {e}")
+                # Если 403 - это часто права доступа ServiceAccount, 
+                # но таблица уже создана. Можно попробовать вернуть ID.
 
             # 3. Настраиваем локаль и заголовки
             self.set_spreadsheet_locale(new_sheet_id, 'ru_RU')
-            await self._setup_sheet_headers(new_sheet_id)
+            
+            # Настраиваем заголовки синхронно
+            self._setup_sheet_headers_sync(new_sheet_id)
             
             return new_sheet_id
             
         except HttpError as error:
             logger.error(f"An error occurred while creating sheet: {error}")
-            return None
+            # Прокидываем исключение, чтобы снаружи могли узнать причину
+            raise error
         except Exception as e:
             logger.error(f"Unexpected error creating sheet: {e}")
+            raise e
+
+    async def create_manager_sheet(self, manager_name: str) -> Optional[str]:
+        """
+        Создать новую таблицу для менеджера.
+        Используем создание с нуля (не копирование), чтобы обойти квоту хранилища Service Account.
+        Запускается в отдельном потоке, чтобы не блокировать бота.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(None, self._create_manager_sheet_sync, manager_name)
+        except Exception as e:
+            logger.error(f"Async create_manager_sheet wrapper failed: {e}")
             return None
     
-    async def _setup_sheet_headers(self, sheet_id: str):
-        """Настроить заголовки таблицы - АКТУАЛЬНАЯ СХЕМА"""
+    def _setup_sheet_headers_sync(self, sheet_id: str):
+        """Настроить заголовки таблицы (синхронная версия)"""
         headers = [
             [
                 "Наименование компании",  # A
@@ -270,6 +286,11 @@ class GoogleSheetsService:
         gid = self._get_first_sheet_gid(sheet_id)
         self._apply_currency_format(sheet_id, gid, [6,7,8,9,10,11,12,13])
 
+    async def _setup_sheet_headers(self, sheet_id: str):
+        """Настроить заголовки таблицы (async wrapper)"""
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, self._setup_sheet_headers_sync, sheet_id)
+
     def _apply_currency_format(self, spreadsheet_id: str, sheet_gid: int, column_indices: List[int]) -> None:
         """Применить формат валюты (₽) к указанным колонкам, начиная со 2-й строки."""
         requests = []
@@ -333,10 +354,6 @@ class GoogleSheetsService:
                 new_comment = f"[{manager_name}] [{current_date}] {call_data.get('comment', '')}"
                 updated_comments = f"{new_comment}\n---\n{existing_comments}" if existing_comments else new_comment
                 updates.append({'range': f'F{company_row}', 'values': [[updated_comments]]})
-                # Обновляем дату последнего звонка в сводной таблице тоже? 
-                # Логично, чтобы руководитель видел. Но мы не знаем индекс последней колонки точно, если там Менеджер.
-                # У нас структура: A-Q + R(Менеджер). Теперь будет A-Q + R(Дата последнего) + S(Менеджер)?
-                # Пока не будем ломать сводную сложной логикой, просто комментарии и дату.
                 
                 self.service.spreadsheets().values().batchUpdate(
                     spreadsheetId=settings.supervisor_sheet_id,
@@ -361,7 +378,6 @@ class GoogleSheetsService:
                     call_data.get('okved_main', ''),  # O
                     call_data.get('okpd_name', ''),  # P
                     current_date,  # Q
-                    # Нет колонки даты последнего звонка пока в сводной, оставляем как было
                     manager_name  # R
                 ]
                 self.service.spreadsheets().values().append(
