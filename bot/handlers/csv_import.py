@@ -97,6 +97,15 @@ async def import_csv_task(data_rows, manager_name, sheet_id, bot, chat_id):
             
             # Подготавливаем базовые данные
             inn = row[1].strip()
+            
+            # Восстанавливаем ведущий ноль, если он потерялся при экспорте из Excel
+            # Юрлица: 10 цифр (если 9 - добавляем 0)
+            # ИП: 12 цифр (если 11 - добавляем 0)
+            if len(inn) == 9:
+                inn = "0" + inn
+            elif len(inn) == 11:
+                inn = "0" + inn
+
             company_name = row[0].strip()
             
             # Пробуем обогатить данные через API (финансы, ОКВЭД и т.д.)
