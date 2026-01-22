@@ -223,6 +223,16 @@ async def manage_specific_manager(callback: CallbackQuery, session: AsyncSession
             url=f"https://docs.google.com/spreadsheets/d/{manager.google_sheet_id}"
         )
     )
+    
+    # Кнопка удаления (только если деактивирован)
+    if not manager.is_active:
+        builder.row(
+            InlineKeyboardButton(
+                text="🗑 Удалить навсегда", 
+                callback_data=f"delete_manager_confirm:{manager_id}"
+            )
+        )
+
     builder.row(
         InlineKeyboardButton(text="🔙 Назад", callback_data="manage_managers")
     )
@@ -276,6 +286,72 @@ async def deactivate_manager(callback: CallbackQuery, session: AsyncSession):
         await manage_specific_manager(callback, session)
     else:
         await callback.answer("❌ Менеджер не найден", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("delete_manager_confirm:"))
+async def confirm_delete_manager(callback: CallbackQuery, session: AsyncSession):
+    """Подтверждение удаления менеджера"""
+    manager_id = int(callback.data.split(":")[1])
+    
+    result = await session.execute(
+        select(Manager).where(Manager.id == manager_id)
+    )
+    manager = result.scalar_one_or_none()
+    
+    if not manager:
+        await callback.answer("❌ Менеджер не найден", show_alert=True)
+        return
+        
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text="💣 ДА, УДАЛИТЬ", 
+            callback_data=f"delete_manager_final:{manager_id}"
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text="🔙 Нет, отмена", 
+            callback_data=f"manager:{manager_id}"
+        )
+    )
+    
+    await callback.message.edit_text(
+        f"⚠️ *ВНИМАНИЕ! УДАЛЕНИЕ МЕНЕДЖЕРА*\n\n"
+        f"Вы собираетесь удалить менеджера: *{manager.full_name}*\n"
+        f"ID: `{manager.telegram_id}`\n\n"
+        f"❗ Это действие необратимо. Менеджер пропадет из базы бота.\n"
+        f"Его Google-таблица ОСТАНЕТСЯ (бот её не удалит), но связь с ней будет потеряна.\n\n"
+        f"Вы уверены?",
+        parse_mode="Markdown",
+        reply_markup=builder.as_markup()
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("delete_manager_final:"))
+async def final_delete_manager(callback: CallbackQuery, session: AsyncSession):
+    """Финальное удаление менеджера"""
+    manager_id = int(callback.data.split(":")[1])
+    
+    result = await session.execute(
+        select(Manager).where(Manager.id == manager_id)
+    )
+    manager = result.scalar_one_or_none()
+    
+    if manager:
+        manager_name = manager.full_name
+        await session.delete(manager)
+        await session.commit()
+        
+        await callback.message.edit_text(
+            f"🗑 Менеджер *{manager_name}* успешно удален из базы.",
+            parse_mode="Markdown",
+            reply_markup=get_admin_menu()
+        )
+    else:
+        await callback.answer("❌ Менеджер не найден", show_alert=True)
+
 
 
 @router.callback_query(F.data == "supervisor_sheet") 
