@@ -9,7 +9,7 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from loguru import logger
 from config import settings
-from datetime import datetime
+from datetime import datetime, timedelta
 
 
 class GoogleSheetsService:
@@ -433,6 +433,37 @@ class GoogleSheetsService:
             logger.error(f"Error updating specific columns: {e}")
             return False
 
+    def _parse_date_value(self, value: Any) -> Optional[datetime.date]:
+        """
+        Парсит значение даты из ячейки (UNFORMATTED_VALUE).
+        Может быть int/float (Excel serial date) или str (текст).
+        """
+        if not value:
+            return None
+            
+        # 1. Если это число (Excel serial date)
+        if isinstance(value, (int, float)):
+            try:
+                # Excel base date: Dec 30, 1899
+                # 46044 -> 2026-01-22
+                base_date = datetime(1899, 12, 30).date()
+                delta = timedelta(days=int(value)) # int is enough for date
+                return base_date + delta
+            except Exception:
+                return None
+        
+        # 2. Если это строка
+        if isinstance(value, str):
+            value = value.strip()
+            # Пробуем стандартные форматы
+            for fmt in ["%d.%m.%y", "%d.%m.%Y", "%Y-%m-%d"]:
+                try:
+                    return datetime.strptime(value, fmt).date()
+                except ValueError:
+                    pass
+            
+        return None
+
     async def get_today_calls(self, sheet_id: str) -> List[Dict[str, Any]]:
         """Получить список звонков, запланированных на сегодня."""
         try:
@@ -446,9 +477,11 @@ class GoogleSheetsService:
             
             logger.info(f"Fetching calls for {sheet_id} on date {today_date}")
 
+            # Используем UNFORMATTED_VALUE, чтобы получать даты как числа (serial date)
             result = self.service.spreadsheets().values().get(
                 spreadsheetId=sheet_id,
-                range='A:AZ'
+                range='A:AZ',
+                valueRenderOption='UNFORMATTED_VALUE'
             ).execute()
             values = result.get('values', [])
             
@@ -459,32 +492,31 @@ class GoogleSheetsService:
                 for i, row in enumerate(values[1:], 2):
                     # ИНН - колонка B (index 1), Дата след. звонка - колонка E (index 4)
                     if len(row) > 4:
-                        next_call_date_str = row[4].strip()
-                        if not next_call_date_str:
+                        next_call_val = row[4] # Может быть int, float или str
+                        
+                        parsed_date = self._parse_date_value(next_call_val)
+                        
+                        # DEBUG LOGGING
+                        # if i < 20:
+                        #    logger.info(f"Row {i}: val={next_call_val} ({type(next_call_val)}) -> parsed={parsed_date} vs today={today_date}")
+                        
+                        if not parsed_date:
                             continue
-                            
-                        # Пытаемся распарсить дату из ячейки
-                        parsed_date = None
-                        try:
-                            # Пробуем формат DD.MM.YY
-                            if len(next_call_date_str.split('.')[-1]) == 2:
-                                parsed_date = datetime.strptime(next_call_date_str, "%d.%m.%y").date()
-                            # Пробуем формат DD.MM.YYYY
-                            elif len(next_call_date_str.split('.')[-1]) == 4:
-                                parsed_date = datetime.strptime(next_call_date_str, "%d.%m.%Y").date()
-                        except ValueError:
-                            continue # Невалидная дата
                         
                         # Сравниваем даты
                         if parsed_date == today_date:
+                            # Для текстовых полей (Revenue и т.д.) форматирование может слететь,
+                            # но для AI и логики это даже лучше (числа).
+                            # Для отображения в боте (sheet_info) Revenue не используется.
+                            
                             today_calls.append({
-                                'company_name': row[0] if len(row) > 0 else 'Не указано',
-                                'inn': row[1] if len(row) > 1 else 'Не указано',
-                                'contact_name': row[2] if len(row) > 2 else '',
-                                'phone': row[3] if len(row) > 3 else 'Не указано',
-                                'comment': row[5] if len(row) > 5 else '',
-                                'revenue': row[7] if len(row) > 7 else '',
-                                'gov_contracts': row[13] if len(row) > 13 else '',
+                                'company_name': str(row[0]) if len(row) > 0 else 'Не указано',
+                                'inn': str(row[1]) if len(row) > 1 else 'Не указано',
+                                'contact_name': str(row[2]) if len(row) > 2 else '',
+                                'phone': str(row[3]) if len(row) > 3 else 'Не указано',
+                                'comment': str(row[5]) if len(row) > 5 else '',
+                                'revenue': str(row[7]) if len(row) > 7 else '',
+                                'gov_contracts': str(row[13]) if len(row) > 13 else '',
                             })
             
             logger.info(f"Found {len(today_calls)} calls for today")
@@ -501,59 +533,60 @@ class GoogleSheetsService:
         2. Дата последнего звонка (Col R) != Сегодня.
         """
         try:
+            # Используем UNFORMATTED_VALUE
             result = self.service.spreadsheets().values().get(
                 spreadsheetId=sheet_id,
-                range='A:R'  # Читаем до R включительно
+                range='A:R',  # Читаем до R включительно
+                valueRenderOption='UNFORMATTED_VALUE'
             ).execute()
             values = result.get('values', [])
             
             if len(values) < 2:
                 return []
 
-            today = datetime.now().date()
-            today_str = self._now_str() # DD.MM.YY
+            try:
+                from zoneinfo import ZoneInfo
+                tz = ZoneInfo(getattr(settings, 'timezone', 'Europe/Moscow'))
+                today = datetime.now(tz).date()
+            except Exception:
+                today = datetime.now().date()
+                
+            today_str = self._now_str() # DD.MM.YY (для проверки комментариев)
             missed_calls = []
             
             for row in values[1:]:
                 if len(row) < 5: # Нужно хотя бы до E (дата звонка)
                     continue
                     
-                next_call_date_str = row[4].strip()
-                if not next_call_date_str:
+                next_call_val = row[4]
+                next_call_date = self._parse_date_value(next_call_val)
+                
+                if not next_call_date:
                     continue
-                    
-                # Парсим дату следующего звонка
-                try:
-                    # Формат может быть DD.MM.YY или DD.MM.YYYY
-                    if len(next_call_date_str.split('.')[-1]) == 2:
-                        next_call_date = datetime.strptime(next_call_date_str, "%d.%m.%y").date()
-                    else:
-                        next_call_date = datetime.strptime(next_call_date_str, "%d.%m.%Y").date()
-                except ValueError:
-                    continue # Некорректная дата, пропускаем
                 
                 # Если дата в будущем - не интересно
                 if next_call_date > today:
                     continue
                     
                 # Проверяем дату последнего звонка (Col R - индекс 17)
-                last_call_date_str = row[17].strip() if len(row) > 17 else ""
+                # Тут тоже может быть число или строка
+                last_call_val = row[17] if len(row) > 17 else ""
+                last_call_date = self._parse_date_value(last_call_val)
                 
                 # Проверяем историю звонков (Col F - индекс 5) на случай если R пустой
-                # Ищем вхождение сегодняшней даты в начале строки комментария
-                comments = row[5].strip() if len(row) > 5 else ""
+                comments = str(row[5]).strip() if len(row) > 5 else ""
                 has_comment_today = comments.startswith(f"[{today_str}]") or comments.startswith(today_str)
                 
                 # Если последний звонок был сегодня (по R или по комментарию) - значит звонили
-                if last_call_date_str == today_str or has_comment_today:
+                if last_call_date == today or has_comment_today:
                     continue
                     
                 # Если дошли сюда - значит дата звонка наступила (или прошла), а звонка сегодня не было
                 missed_calls.append({
-                    'company_name': row[0] if len(row) > 0 else 'Не указано',
-                    'inn': row[1] if len(row) > 1 else 'Не указано',
-                    'phone': row[3] if len(row) > 3 else 'Не указано',
-                    'planned_date': next_call_date_str
+                    'company_name': str(row[0]) if len(row) > 0 else 'Не указано',
+                    'inn': str(row[1]) if len(row) > 1 else 'Не указано',
+                    'phone': str(row[3]) if len(row) > 3 else 'Не указано',
+                    'planned_date': next_call_date.strftime("%d.%m.%Y")
                 })
                             
             return missed_calls
