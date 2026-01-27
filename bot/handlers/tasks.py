@@ -67,7 +67,7 @@ async def task_completed_handler(callback: types.CallbackQuery, state: FSMContex
     await show_next_task(callback.message, state, callback.from_user.id, session)
 
 async def show_next_task(message: types.Message, state: FSMContext, user_id: int, session: AsyncSession):
-    """Показать следующую задачу из списка на сегодня"""
+    """Показать следующую задачу из списка (просроченные + на сегодня)"""
     
     # 1. Ищем sheet_id пользователя
     result = await session.execute(select(Manager).where(Manager.telegram_id == user_id))
@@ -79,13 +79,23 @@ async def show_next_task(message: types.Message, state: FSMContext, user_id: int
 
     google_sheets_service = get_google_sheets_service()
     
-    # 2. Получаем список звонков на сегодня
+    # 2. Получаем список просроченных звонков (недозвонов) и звонков на сегодня
+    missed_calls = await google_sheets_service.get_missed_calls(manager.google_sheet_id)
     today_calls = await google_sheets_service.get_today_calls(manager.google_sheet_id)
+    
+    # 3. Маркируем просроченные задачи
+    for call in missed_calls:
+        call['is_overdue'] = True
+    for call in today_calls:
+        call['is_overdue'] = False
+    
+    # 4. Объединяем списки (сначала просроченные - они приоритетнее)
+    all_tasks = missed_calls + today_calls
     
     data = await state.get_data()
     current_index = data.get("task_index", 0)
     
-    if not today_calls:
+    if not all_tasks:
         await message.edit_text(
             "🎉 На сегодня запланированных звонков нет!\n"
             "Отличная возможность поработать с новыми клиентами! 🚀",
@@ -96,9 +106,9 @@ async def show_next_task(message: types.Message, state: FSMContext, user_id: int
         return
 
     # Если дошли до конца списка - начинаем сначала (или говорим что всё)
-    if current_index >= len(today_calls):
+    if current_index >= len(all_tasks):
         # Если были пропущенные задачи (индекс > 0), предложим начать сначала
-        if len(today_calls) > 0:
+        if len(all_tasks) > 0:
             await message.edit_text(
                 "✅ Вы просмотрели все задачи в списке!\n"
                 "Остались пропущенные задачи. Начать сначала?",
@@ -117,7 +127,7 @@ async def show_next_task(message: types.Message, state: FSMContext, user_id: int
         return
 
     # 3. Берем задачу
-    task = today_calls[current_index]
+    task = all_tasks[current_index]
     inn = task.get('inn', '').replace("'", "") # Убираем апостроф если есть
     
     # При edit_text иногда бывает, что сообщение не изменилось - ловим ошибку
@@ -148,10 +158,19 @@ async def show_next_task(message: types.Message, state: FSMContext, user_id: int
     contact_name = company_data.get('contact_name', 'Не указан')
     phone = company_data.get('phone', 'Не указан')
     last_comment = company_data.get('comment', '')
+    is_overdue = task.get('is_overdue', False)
+    
+    # Подсчёт просроченных и сегодняшних задач для информации
+    overdue_count = len(missed_calls)
+    today_count = len(today_calls)
+    
+    # Статус задачи
+    task_status = "⚠️ <b>ПРОСРОЧЕНО</b>" if is_overdue else "📅 На сегодня"
     
     # Отправляем основное сообщение
     info_text = (
-        f"📞 <b>Задача {current_index + 1} из {len(today_calls)}</b>\n\n"
+        f"📞 <b>Задача {current_index + 1} из {len(all_tasks)}</b> ({task_status})\n"
+        f"<i>Просроченных: {overdue_count}, На сегодня: {today_count}</i>\n\n"
         f"🏢 <b>{company_name}</b>\n"
         f"🆔 ИНН: <code>{inn}</code>\n"
         f"👤 Контакт: <b>{contact_name}</b>\n"
