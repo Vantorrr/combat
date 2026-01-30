@@ -12,6 +12,7 @@ ENV/
 .env
 credentials.json
 token.json
+token.b64
 oauth_client.json
 
 # Database
