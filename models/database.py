@@ -1,10 +1,21 @@
-from sqlalchemy import create_engine, Column, Integer, BigInteger, String, DateTime, Boolean, ForeignKey
+from sqlalchemy import create_engine, Column, Integer, BigInteger, String, DateTime, Boolean, ForeignKey, Text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship, sessionmaker
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from datetime import datetime
 
 Base = declarative_base()
+
+
+class OAuthToken(Base):
+    """Хранилище OAuth токена Google для автоматического обновления"""
+    __tablename__ = "oauth_tokens"
+    
+    id = Column(Integer, primary_key=True)
+    service_name = Column(String, unique=True, nullable=False, default="google_sheets")
+    token_json = Column(Text, nullable=False)  # JSON с access_token, refresh_token и т.д.
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 
 class Manager(Base):

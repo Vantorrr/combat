@@ -113,12 +113,43 @@ async def process_auth_code(message: types.Message, state: FSMContext):
         b64_str = base64.b64encode(creds.to_json().encode('utf-8')).decode('utf-8')
         with open('token.b64', 'w') as token_b64:
             token_b64.write(b64_str)
+        
+        # 🆕 СОХРАНЯЕМ В БАЗУ ДАННЫХ для автоматического обновления
+        try:
+            from models.database import AsyncSessionLocal, OAuthToken
+            from sqlalchemy import select
+            from datetime import datetime
+            
+            token_json_str = creds.to_json()
+            
+            async with AsyncSessionLocal() as db_session:
+                # Проверяем есть ли уже запись
+                result = await db_session.execute(
+                    select(OAuthToken).where(OAuthToken.service_name == "google_sheets")
+                )
+                token_row = result.scalar_one_or_none()
+                
+                if token_row:
+                    token_row.token_json = token_json_str
+                    token_row.updated_at = datetime.utcnow()
+                else:
+                    token_row = OAuthToken(
+                        service_name="google_sheets",
+                        token_json=token_json_str
+                    )
+                    db_session.add(token_row)
+                
+                await db_session.commit()
+                logger.info("✅ OAuth token saved to database")
+        except Exception as e:
+            logger.error(f"Failed to save token to database: {e}")
             
         await message.answer(
             "✅ **Авторизация успешна!**\n"
-            "Токен сохранен на сервере.\n\n"
-            "⚠️ **ВАЖНО: ЧТОБЫ АВТОРИЗАЦИЯ НЕ СЛЕТЕЛА**\n"
-            "Скопируйте код ниже и добавьте его в Railway Variables как `GOOGLE_OAUTH_TOKEN_JSON_B64`:\n"
+            "Токен сохранен в базе данных.\n\n"
+            "🎉 **Теперь токен будет обновляться автоматически!**\n"
+            "Больше не нужно вручную обновлять его каждый месяц.\n\n"
+            "⚠️ Бэкап (на случай переезда на новый сервер):\n"
             f"```\n{b64_str}\n```"
         )
         
