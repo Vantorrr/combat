@@ -41,7 +41,7 @@ def get_oauth_client_config():
     return None
 
 def main():
-    auth_code = "4/1ASc3gC1HHH3mv4_ZpjeKsmycBtZ-KrssU8ej5m6_j-1AkmplUejEtO9AzoI"
+    auth_code = "4/1ASc3gC1TlmhOFfxGaPrc02ZOc0hVh0GbxACP1XoxqxwhvXdcD_o3LGB5s38"
     
     print("🔑 Обрабатываю код авторизации...")
     
