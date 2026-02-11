@@ -70,6 +70,9 @@ def get_admin_menu() -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="🔄 Обновить данные (DataNewton)", callback_data="update_datanewton")
     )
     builder.row(
+        InlineKeyboardButton(text="🔍 Обновить 1 компанию по ИНН", callback_data="update_one_company")
+    )
+    builder.row(
         InlineKeyboardButton(text="🔙 Главное меню", callback_data="main_menu")
     )
     

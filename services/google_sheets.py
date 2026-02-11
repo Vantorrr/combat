@@ -349,20 +349,53 @@ class GoogleSheetsService:
             current_date = self._now_str()
             if company_row:
                 updates = []
+                # Обновляем дату следующего звонка
                 updates.append({'range': f'E{company_row}', 'values': [[call_data.get('next_call_date', '')]]})
+                
+                # Обновляем комментарии
                 existing_comments = values[company_row - 1][5] if len(values[company_row - 1]) > 5 else ''
                 new_comment = f"[{manager_name}] [{current_date}] {call_data.get('comment', '')}"
                 updated_comments = f"{new_comment}\n---\n{existing_comments}" if existing_comments else new_comment
                 updates.append({'range': f'F{company_row}', 'values': [[updated_comments]]})
+                
+                # Обновляем финансовые данные (если они есть в call_data)
+                if call_data.get('revenue_previous'):
+                    updates.append({'range': f'G{company_row}', 'values': [[call_data.get('revenue_previous', '')]]})
+                if call_data.get('revenue'):
+                    updates.append({'range': f'H{company_row}', 'values': [[call_data.get('revenue', '')]]})
+                if call_data.get('net_profit'):
+                    updates.append({'range': f'I{company_row}', 'values': [[call_data.get('net_profit', '')]]})
+                if call_data.get('capital'):
+                    updates.append({'range': f'J{company_row}', 'values': [[call_data.get('capital', '')]]})
+                if call_data.get('assets'):
+                    updates.append({'range': f'K{company_row}', 'values': [[call_data.get('assets', '')]]})
+                if call_data.get('debit'):
+                    updates.append({'range': f'L{company_row}', 'values': [[call_data.get('debit', '')]]})
+                if call_data.get('credit'):
+                    updates.append({'range': f'M{company_row}', 'values': [[call_data.get('credit', '')]]})
+                if call_data.get('gov_contracts'):
+                    updates.append({'range': f'N{company_row}', 'values': [[call_data.get('gov_contracts', '')]]})
+                if call_data.get('okved_main'):
+                    updates.append({'range': f'O{company_row}', 'values': [[call_data.get('okved_main', '')]]})
+                if call_data.get('okpd_name'):
+                    updates.append({'range': f'P{company_row}', 'values': [[call_data.get('okpd_name', '')]]})
+                
+                # Обновляем дату последнего звонка
+                updates.append({'range': f'R{company_row}', 'values': [[current_date]]})
                 
                 self.service.spreadsheets().values().batchUpdate(
                     spreadsheetId=settings.supervisor_sheet_id,
                     body={'valueInputOption': 'USER_ENTERED', 'data': updates}
                 ).execute()
             else:
+                # ИНН сохраняем как текст с апострофом, чтобы ведущие нули не терялись
+                inn_value = call_data.get('inn', '')
+                if inn_value and str(inn_value).startswith('0'):
+                    inn_value = f"'{inn_value}"
+                
                 row_data = [
                     call_data.get('company_name', ''),  # A
-                    call_data.get('inn', ''),  # B
+                    inn_value,  # B - ИНН как текст
                     call_data.get('contact_name', ''),  # C
                     call_data.get('phone', ''),  # D
                     call_data.get('next_call_date', ''),  # E

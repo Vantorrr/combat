@@ -28,6 +28,9 @@ class AdminStates(StatesGroup):
     waiting_for_csv_file = State()
     # Состояния для обновления данных
     waiting_for_update_manager = State()
+    # Состояния для обновления одной компании
+    waiting_for_update_one_inn = State()
+    waiting_for_update_one_manager = State()
 
 
 class AIInsightStates(StatesGroup):

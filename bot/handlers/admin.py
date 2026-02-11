@@ -625,3 +625,200 @@ async def test_missed_calls_report(message: Message, session: AsyncSession):
         logger.error(f"Test missed calls failed: {e}")
         logger.error(traceback.format_exc())
         await message.answer(f"❌ Ошибка: {str(e)[:200]}")
+
+
+@router.callback_query(F.data == "update_one_company")
+async def update_one_company_start(callback: CallbackQuery, state: FSMContext):
+    """Начало обновления одной компании по ИНН"""
+    user_id = callback.from_user.id
+    
+    if user_id not in settings.admin_ids_list:
+        await callback.answer("❌ Недостаточно прав", show_alert=True)
+        return
+    
+    await callback.message.edit_text(
+        "🔍 *Обновление одной компании*\n\n"
+        "Отправьте ИНН компании для обновления данных:",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_menu")]
+        ])
+    )
+    await state.set_state(AdminStates.waiting_for_update_one_inn)
+    await callback.answer()
+
+
+@router.message(AdminStates.waiting_for_update_one_inn)
+async def process_update_one_inn(message: Message, state: FSMContext, session: AsyncSession):
+    """Обработка ИНН для обновления одной компании"""
+    inn = message.text.strip()
+    
+    # Валидация ИНН
+    if not inn.isdigit() or len(inn) not in [10, 12]:
+        await message.answer("❌ Некорректный ИНН. Введите 10 или 12 цифр:")
+        return
+    
+    await state.update_data(update_inn=inn)
+    
+    # Получаем список менеджеров
+    result = await session.execute(select(Manager).where(Manager.is_active == True))
+    managers = result.scalars().all()
+    
+    if not managers:
+        await message.answer("❌ Нет активных менеджеров")
+        await state.clear()
+        return
+    
+    # Создаем клавиатуру выбора менеджера
+    builder = InlineKeyboardBuilder()
+    for manager in managers:
+        builder.row(
+            InlineKeyboardButton(
+                text=f"{manager.full_name}",
+                callback_data=f"update_one_mgr:{manager.id}"
+            )
+        )
+    builder.row(
+        InlineKeyboardButton(text="🔙 Назад", callback_data="admin_menu")
+    )
+    
+    await message.answer(
+        f"📋 ИНН: `{inn}`\n\n"
+        f"Выберите менеджера, в чьей таблице обновить данные:",
+        parse_mode="Markdown",
+        reply_markup=builder.as_markup()
+    )
+    await state.set_state(AdminStates.waiting_for_update_one_manager)
+
+
+@router.callback_query(F.data.startswith("update_one_mgr:"))
+async def process_update_one_manager(callback: CallbackQuery, state: FSMContext, session: AsyncSession):
+    """Обновление данных одной компании у выбранного менеджера"""
+    manager_id = int(callback.data.split(":")[1])
+    data = await state.get_data()
+    inn = data.get('update_inn')
+    
+    if not inn:
+        await callback.answer("❌ Ошибка: ИНН не найден", show_alert=True)
+        await state.clear()
+        return
+    
+    # Получаем менеджера
+    result = await session.execute(select(Manager).where(Manager.id == manager_id))
+    manager = result.scalar_one_or_none()
+    
+    if not manager or not manager.google_sheet_id:
+        await callback.answer("❌ Менеджер или таблица не найдены", show_alert=True)
+        await state.clear()
+        return
+    
+    await callback.message.edit_text(
+        f"⏳ Обновляю данные компании `{inn}` в таблице {manager.full_name}...\n\n"
+        f"Это может занять несколько секунд.",
+        parse_mode="Markdown"
+    )
+    
+    try:
+        google_sheets = get_google_sheets_service()
+        
+        # 1. Проверяем что компания есть в таблице
+        company_data = await google_sheets.find_company_by_inn(manager.google_sheet_id, inn)
+        
+        if not company_data:
+            await callback.message.edit_text(
+                f"❌ Компания с ИНН `{inn}` не найдена в таблице {manager.full_name}",
+                parse_mode="Markdown",
+                reply_markup=get_admin_menu()
+            )
+            await state.clear()
+            return
+        
+        # 2. Получаем свежие данные из DataNewton
+        fresh_data = await datanewton_api.get_full_company_data(inn)
+        
+        if not fresh_data:
+            await callback.message.edit_text(
+                f"❌ Не удалось получить данные из DataNewton для ИНН `{inn}`",
+                parse_mode="Markdown",
+                reply_markup=get_admin_menu()
+            )
+            await state.clear()
+            return
+        
+        # 3. Обновляем данные в таблице менеджера
+        column_updates = {
+            'G': fresh_data.get('revenue_previous', ''),
+            'H': fresh_data.get('revenue', ''),
+            'I': fresh_data.get('net_profit', ''),
+            'J': fresh_data.get('capital', ''),
+            'K': fresh_data.get('assets', ''),
+            'L': fresh_data.get('debit', ''),
+            'M': fresh_data.get('credit', ''),
+            'N': fresh_data.get('gov_contracts', ''),
+            'O': fresh_data.get('okved', ''),
+            'P': fresh_data.get('okpd_name', ''),
+        }
+        
+        success = await google_sheets.update_specific_columns(
+            manager.google_sheet_id,
+            inn,
+            column_updates
+        )
+        
+        if not success:
+            await callback.message.edit_text(
+                f"❌ Ошибка при обновлении таблицы менеджера",
+                parse_mode="Markdown",
+                reply_markup=get_admin_menu()
+            )
+            await state.clear()
+            return
+        
+        # 4. Обновляем сводную таблицу
+        call_data = {
+            'inn': inn,
+            'company_name': company_data.get('company_name', ''),
+            'contact_name': company_data.get('contact_name', ''),
+            'phone': company_data.get('phone', ''),
+            'next_call_date': company_data.get('next_call_date', ''),
+            'comment': f"Обновлены данные DataNewton",
+            'revenue_previous': fresh_data.get('revenue_previous', ''),
+            'revenue': fresh_data.get('revenue', ''),
+            'net_profit': fresh_data.get('net_profit', ''),
+            'capital': fresh_data.get('capital', ''),
+            'assets': fresh_data.get('assets', ''),
+            'debit': fresh_data.get('debit', ''),
+            'credit': fresh_data.get('credit', ''),
+            'gov_contracts': fresh_data.get('gov_contracts', ''),
+            'okved_main': fresh_data.get('okved', ''),
+            'okpd_name': fresh_data.get('okpd_name', ''),
+        }
+        
+        await google_sheets.update_supervisor_sheet(
+            manager_name=manager.full_name,
+            call_data=call_data,
+            check_headers=False
+        )
+        
+        await callback.message.edit_text(
+            f"✅ *Данные успешно обновлены!*\n\n"
+            f"ИНН: `{inn}`\n"
+            f"Компания: {company_data.get('company_name', 'Н/Д')}\n"
+            f"Менеджер: {manager.full_name}\n\n"
+            f"Обновлено:\n"
+            f"• Таблица менеджера ✅\n"
+            f"• Сводная таблица ✅",
+            parse_mode="Markdown",
+            reply_markup=get_admin_menu()
+        )
+        
+    except Exception as e:
+        logger.error(f"Error updating one company: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        await callback.message.edit_text(
+            f"❌ Ошибка при обновлении:\n{str(e)[:200]}",
+            reply_markup=get_admin_menu()
+        )
+    
+    await state.clear()
