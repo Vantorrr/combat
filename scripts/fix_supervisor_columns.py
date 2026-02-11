@@ -123,29 +123,37 @@ def main():
     print("\n3️⃣ Исправляем данные...")
     updates = []
     fixed_count = 0
+    dates_fixed = 0
     
     for i, row in enumerate(values, 2):  # Начинаем со строки 2 (после заголовков)
         row_updates = []
+        row_had_fixes = False
         
-        # Исправляем дату будущего звонка (E)
+        # Исправляем дату будущего звонка (E - индекс 4)
         if len(row) > 4 and row[4]:
-            fixed_date = parse_date(row[4])
-            if fixed_date != row[4]:
+            original = str(row[4]).strip()
+            fixed_date = parse_date(original)
+            if fixed_date and fixed_date != original:
                 row_updates.append({
                     'range': f'E{i}',
                     'values': [[fixed_date]]
                 })
+                dates_fixed += 1
+                row_had_fixes = True
         
         # Исправляем дату первого звонка (Q - индекс 16)
         if len(row) > 16 and row[16]:
-            fixed_date = parse_date(row[16])
-            if fixed_date != row[16]:
+            original = str(row[16]).strip()
+            fixed_date = parse_date(original)
+            if fixed_date and fixed_date != original:
                 row_updates.append({
                     'range': f'Q{i}',
                     'values': [[fixed_date]]
                 })
+                dates_fixed += 1
+                row_had_fixes = True
         
-        # Колонка R: если там менеджер (текст) - заменяем на дату первого звонка
+        # Колонка R (индекс 17): если там менеджер (текст) - заменяем на дату первого звонка
         if len(row) > 17:
             col_r_value = str(row[17]).strip()
             # Проверяем - это дата или текст (имя менеджера)?
@@ -158,18 +166,25 @@ def main():
                         'range': f'R{i}',
                         'values': [[fixed_date]]
                     })
-                    print(f"  Строка {i}: '{col_r_value}' → {fixed_date}")
+                    print(f"  Строка {i}: Менеджер '{col_r_value}' → {fixed_date}")
+                    dates_fixed += 1
+                    row_had_fixes = True
             elif col_r_value:
                 # Это дата - просто форматируем
-                fixed_date = parse_date(col_r_value)
-                if fixed_date != col_r_value:
+                original = col_r_value
+                fixed_date = parse_date(original)
+                if fixed_date and fixed_date != original:
                     row_updates.append({
                         'range': f'R{i}',
                         'values': [[fixed_date]]
                     })
+                    dates_fixed += 1
+                    row_had_fixes = True
         
         if row_updates:
             updates.extend(row_updates)
+        
+        if row_had_fixes:
             fixed_count += 1
     
     # 4. Применяем изменения
@@ -183,7 +198,7 @@ def main():
                     'data': updates
                 }
             ).execute()
-            print(f"✅ Исправлено {fixed_count} строк!")
+            print(f"✅ Исправлено {fixed_count} строк ({dates_fixed} дат)!")
         except Exception as e:
             print(f"❌ Ошибка применения изменений: {e}")
             return
@@ -196,7 +211,9 @@ def main():
     print("\n📋 Что было сделано:")
     print("  ✅ Заголовки обновлены")
     print(f"  ✅ Даты отформатированы в ДД.ММ.ГГГГ")
-    print(f"  ✅ Колонка R = 'Дата последнего звонка'")
+    print(f"  ✅ Колонка E = 'Дата звонка будущая' (формат исправлен)")
+    print(f"  ✅ Колонка Q = 'Дата первого звонка' (формат исправлен)")
+    print(f"  ✅ Колонка R = 'Дата последнего звонка' (формат исправлен)")
     print(f"  ✅ Имена менеджеров убраны (остались в комментариях)")
 
 
