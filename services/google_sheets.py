@@ -377,8 +377,8 @@ class GoogleSheetsService:
                     call_data.get('gov_contracts', ''),  # N
                     call_data.get('okved_main', ''),  # O
                     call_data.get('okpd_name', ''),  # P
-                    current_date,  # Q
-                    manager_name  # R
+                    current_date,  # Q - Дата первого звонка
+                    current_date,  # R - Дата последнего звонка
                 ]
                 self.service.spreadsheets().values().append(
                     spreadsheetId=settings.supervisor_sheet_id,
