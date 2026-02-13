@@ -1,0 +1,696 @@
+<!DOCTYPE html>
+<html lang="ru" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Alfa CRM - Админ-панель</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        alfa: {
+                            red: '#EF3124',
+                            redHover: '#D92B1E',
+                            redDark: '#8B1A12',
+                            black: '#0B0B0B',
+                            darkGray: '#1A1A1A',
+                            cardBg: '#141414',
+                            textGray: '#999999',
+                            border: '#2A2A2A',
+                            borderLight: '#333333'
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0B0B0B; color: white; }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #0B0B0B; }
+        ::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+        .glass-card { background: #141414; border: 1px solid #2A2A2A; border-radius: 16px; }
+        .nav-blur { background: rgba(11, 11, 11, 0.85); backdrop-filter: blur(16px); border-bottom: 1px solid #2A2A2A; }
+        .section-btn.active { background: rgba(239, 49, 36, 0.15); border-color: #EF3124; color: #EF3124; }
+        .section-btn { transition: all 0.2s ease; }
+        .toast { animation: slideUp 0.3s ease-out; }
+        @keyframes slideUp { from { transform: translateY(100%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+        .fade-in { animation: fadeIn 0.3s ease; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+        .progress-bar { transition: width 0.5s ease; }
+        .drag-over { border-color: #EF3124 !important; background: rgba(239, 49, 36, 0.05) !important; }
+    </style>
+</head>
+<body class="min-h-screen pb-8">
+    <!-- Navbar -->
+    <nav class="nav-blur fixed top-0 w-full z-50">
+        <div class="max-w-6xl mx-auto px-4 sm:px-6">
+            <div class="flex justify-between h-16 items-center">
+                <div class="flex items-center space-x-3">
+                    <div class="w-9 h-9 bg-alfa-red rounded-lg flex items-center justify-center text-white font-extrabold text-lg shadow-lg shadow-red-900/30">A</div>
+                    <div>
+                        <span class="text-lg font-bold tracking-tight">CRM</span>
+                        <span class="text-xs text-alfa-red font-semibold ml-1.5 bg-alfa-red/10 px-2 py-0.5 rounded-full">ADMIN</span>
+                    </div>
+                </div>
+                <div class="flex items-center space-x-3">
+                    <a href="/dashboard.html" class="text-sm text-alfa-textGray hover:text-white transition-colors flex items-center gap-1.5 px-3 py-1.5 rounded-lg hover:bg-white/5">
+                        <i data-lucide="layout-dashboard" class="w-4 h-4"></i>
+                        <span class="hidden sm:inline">Приложение</span>
+                    </a>
+                    <button onclick="logout()" class="p-2 text-alfa-textGray hover:text-white transition-colors rounded-lg hover:bg-white/5">
+                        <i data-lucide="log-out" class="w-5 h-5"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Content -->
+    <main class="max-w-6xl mx-auto px-4 sm:px-6 pt-24">
+        <!-- Section Navigation -->
+        <div class="flex gap-2 mb-8 overflow-x-auto pb-2 no-scrollbar">
+            <button onclick="showSection('managers')" id="btn-managers" class="section-btn active flex items-center gap-2 px-4 py-2.5 rounded-xl border border-alfa-border text-sm font-medium whitespace-nowrap">
+                <i data-lucide="users" class="w-4 h-4"></i> Менеджеры
+            </button>
+            <button onclick="showSection('supervisor')" id="btn-supervisor" class="section-btn flex items-center gap-2 px-4 py-2.5 rounded-xl border border-alfa-border text-sm font-medium text-alfa-textGray whitespace-nowrap">
+                <i data-lucide="table" class="w-4 h-4"></i> Сводная
+            </button>
+            <button onclick="showSection('csv')" id="btn-csv" class="section-btn flex items-center gap-2 px-4 py-2.5 rounded-xl border border-alfa-border text-sm font-medium text-alfa-textGray whitespace-nowrap">
+                <i data-lucide="upload" class="w-4 h-4"></i> Импорт CSV
+            </button>
+            <button onclick="showSection('datanewton')" id="btn-datanewton" class="section-btn flex items-center gap-2 px-4 py-2.5 rounded-xl border border-alfa-border text-sm font-medium text-alfa-textGray whitespace-nowrap">
+                <i data-lucide="refresh-cw" class="w-4 h-4"></i> DataNewton
+            </button>
+            <button onclick="showSection('update_one')" id="btn-update_one" class="section-btn flex items-center gap-2 px-4 py-2.5 rounded-xl border border-alfa-border text-sm font-medium text-alfa-textGray whitespace-nowrap">
+                <i data-lucide="search" class="w-4 h-4"></i> 1 компания
+            </button>
+        </div>
+
+        <!-- ==================== MANAGERS SECTION ==================== -->
+        <div id="section-managers" class="fade-in">
+            <div class="flex justify-between items-center mb-6">
+                <h2 class="text-xl font-bold">Управление менеджерами</h2>
+                <button onclick="openAddManagerModal()" class="flex items-center gap-2 bg-alfa-red text-white px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-alfa-redHover transition-colors shadow-lg shadow-red-900/20">
+                    <i data-lucide="user-plus" class="w-4 h-4"></i> Добавить
+                </button>
+            </div>
+
+            <div id="managersLoading" class="text-center py-16">
+                <div class="animate-spin rounded-full h-10 w-10 border-b-2 border-alfa-red mx-auto"></div>
+            </div>
+
+            <div id="managersContainer" class="space-y-3 hidden"></div>
+        </div>
+
+        <!-- ==================== SUPERVISOR SECTION ==================== -->
+        <div id="section-supervisor" class="hidden fade-in">
+            <h2 class="text-xl font-bold mb-6">Сводная таблица</h2>
+            <div class="glass-card p-8 text-center">
+                <div class="w-16 h-16 rounded-2xl bg-green-500/10 flex items-center justify-center mx-auto mb-4">
+                    <i data-lucide="table" class="w-8 h-8 text-green-400"></i>
+                </div>
+                <p class="text-alfa-textGray mb-6">Таблица с данными от всех менеджеров</p>
+                <a id="supervisorLink" href="#" target="_blank" class="inline-flex items-center gap-2 bg-white text-black font-semibold px-6 py-3 rounded-xl hover:bg-gray-200 transition-colors shadow-lg">
+                    <i data-lucide="external-link" class="w-4 h-4"></i> Открыть в Google Sheets
+                </a>
+            </div>
+        </div>
+
+        <!-- ==================== CSV IMPORT SECTION ==================== -->
+        <div id="section-csv" class="hidden fade-in">
+            <h2 class="text-xl font-bold mb-6">Импорт CSV</h2>
+            
+            <div class="glass-card p-6 mb-6">
+                <div class="mb-5">
+                    <label class="block text-sm font-medium text-alfa-textGray mb-2">Выберите менеджера</label>
+                    <select id="csvManagerSelect" class="w-full bg-[#0B0B0B] border border-alfa-border rounded-xl p-3 text-white focus:border-alfa-red focus:outline-none">
+                        <option value="">Загрузка...</option>
+                    </select>
+                </div>
+                
+                <div class="mb-5">
+                    <label class="block text-sm font-medium text-alfa-textGray mb-2">CSV файл</label>
+                    <div id="csvDropZone" class="border-2 border-dashed border-alfa-border rounded-xl p-8 text-center cursor-pointer hover:border-alfa-textGray transition-colors"
+                         onclick="document.getElementById('csvFileInput').click()"
+                         ondragover="event.preventDefault(); this.classList.add('drag-over')"
+                         ondragleave="this.classList.remove('drag-over')"
+                         ondrop="handleDrop(event)">
+                        <i data-lucide="upload-cloud" class="w-10 h-10 text-alfa-textGray mx-auto mb-3"></i>
+                        <p class="text-white font-medium" id="csvFileName">Перетащите файл или нажмите</p>
+                        <p class="text-xs text-alfa-textGray mt-2">CSV, UTF-8, разделитель , или ;</p>
+                    </div>
+                    <input type="file" id="csvFileInput" accept=".csv" class="hidden" onchange="handleFileSelect(this)">
+                </div>
+                
+                <button onclick="startCsvImport()" id="csvImportBtn" class="w-full bg-alfa-red text-white font-semibold py-3.5 rounded-xl hover:bg-alfa-redHover transition-colors disabled:opacity-40 disabled:cursor-not-allowed shadow-lg shadow-red-900/20" disabled>
+                    Начать импорт
+                </button>
+            </div>
+
+            <!-- Progress -->
+            <div id="csvProgress" class="glass-card p-6 hidden">
+                <div class="flex justify-between items-center mb-3">
+                    <span class="text-sm font-medium" id="csvProgressLabel">Импорт...</span>
+                    <span class="text-sm text-alfa-textGray" id="csvProgressCount">0 / 0</span>
+                </div>
+                <div class="w-full bg-white/5 rounded-full h-2 mb-4">
+                    <div class="bg-alfa-red h-2 rounded-full progress-bar" id="csvProgressBar" style="width: 0%"></div>
+                </div>
+                <div id="csvResult" class="hidden text-sm space-y-1"></div>
+            </div>
+
+            <div class="glass-card p-5 mt-6">
+                <h3 class="text-sm font-semibold mb-3">Формат CSV:</h3>
+                <ol class="text-xs text-alfa-textGray space-y-1 list-decimal list-inside">
+                    <li>Наименование компании</li>
+                    <li>ИНН</li>
+                    <li>ФИО ЛПР</li>
+                    <li>Телефон</li>
+                    <li>Дата первого звонка (ДД.ММ.ГГГГ)</li>
+                    <li>Дата следующего звонка (ДД.ММ.ГГГГ)</li>
+                    <li>Комментарий</li>
+                </ol>
+            </div>
+        </div>
+
+        <!-- ==================== DATANEWTON SECTION ==================== -->
+        <div id="section-datanewton" class="hidden fade-in">
+            <h2 class="text-xl font-bold mb-6">Обновление данных DataNewton</h2>
+            
+            <div class="glass-card p-6 mb-6">
+                <p class="text-sm text-alfa-textGray mb-5">Пройдет по таблице менеджера и загрузит недостающие финансовые данные, госконтракты и ОКПД.</p>
+                
+                <div class="mb-5">
+                    <label class="block text-sm font-medium text-alfa-textGray mb-2">Выберите менеджера</label>
+                    <select id="dnManagerSelect" class="w-full bg-[#0B0B0B] border border-alfa-border rounded-xl p-3 text-white focus:border-alfa-red focus:outline-none">
+                        <option value="">Загрузка...</option>
+                    </select>
+                </div>
+                
+                <button onclick="startDataNewtonUpdate()" id="dnUpdateBtn" class="w-full bg-alfa-red text-white font-semibold py-3.5 rounded-xl hover:bg-alfa-redHover transition-colors disabled:opacity-40 disabled:cursor-not-allowed shadow-lg shadow-red-900/20">
+                    Запустить обновление
+                </button>
+            </div>
+
+            <!-- Progress -->
+            <div id="dnProgress" class="glass-card p-6 hidden">
+                <div class="flex justify-between items-center mb-3">
+                    <span class="text-sm font-medium" id="dnProgressLabel">Обновление...</span>
+                    <span class="text-sm text-alfa-textGray" id="dnProgressCount">0 / 0</span>
+                </div>
+                <div class="w-full bg-white/5 rounded-full h-2 mb-4">
+                    <div class="bg-alfa-red h-2 rounded-full progress-bar" id="dnProgressBar" style="width: 0%"></div>
+                </div>
+                <div id="dnResult" class="hidden text-sm space-y-1"></div>
+            </div>
+        </div>
+
+        <!-- ==================== UPDATE ONE COMPANY SECTION ==================== -->
+        <div id="section-update_one" class="hidden fade-in">
+            <h2 class="text-xl font-bold mb-6">Обновить 1 компанию по ИНН</h2>
+            
+            <div class="glass-card p-6">
+                <div class="mb-5">
+                    <label class="block text-sm font-medium text-alfa-textGray mb-2">ИНН компании</label>
+                    <input type="text" id="updateOneInn" maxlength="12" placeholder="Введите 10 или 12 цифр"
+                        class="w-full bg-[#0B0B0B] border border-alfa-border rounded-xl p-3 text-white focus:border-alfa-red focus:outline-none tracking-widest text-center text-lg font-mono">
+                </div>
+                
+                <div class="mb-5">
+                    <label class="block text-sm font-medium text-alfa-textGray mb-2">Менеджер</label>
+                    <select id="updateOneManager" class="w-full bg-[#0B0B0B] border border-alfa-border rounded-xl p-3 text-white focus:border-alfa-red focus:outline-none">
+                        <option value="">Загрузка...</option>
+                    </select>
+                </div>
+                
+                <button onclick="updateOneCompany()" id="updateOneBtn" class="w-full bg-alfa-red text-white font-semibold py-3.5 rounded-xl hover:bg-alfa-redHover transition-colors shadow-lg shadow-red-900/20">
+                    Обновить данные
+                </button>
+                
+                <div id="updateOneResult" class="mt-5 hidden"></div>
+            </div>
+        </div>
+    </main>
+
+    <!-- ==================== ADD MANAGER MODAL ==================== -->
+    <div id="addManagerModal" class="fixed inset-0 z-[60] hidden">
+        <div class="absolute inset-0 bg-black/80 backdrop-blur-sm" onclick="closeAddManagerModal()"></div>
+        <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md bg-[#141414] rounded-2xl border border-[#2A2A2A] shadow-2xl p-6">
+            <div class="flex justify-between items-center mb-6">
+                <h3 class="text-lg font-semibold text-white">Новый менеджер</h3>
+                <button onclick="closeAddManagerModal()" class="text-alfa-textGray hover:text-white"><i data-lucide="x" class="w-6 h-6"></i></button>
+            </div>
+            <form id="addManagerForm" class="space-y-5">
+                <div>
+                    <label class="block text-sm font-medium text-alfa-textGray mb-2">Полное имя *</label>
+                    <input type="text" id="newManagerName" required class="w-full bg-[#0B0B0B] border border-[#2A2A2A] rounded-xl p-3 text-white focus:border-alfa-red focus:outline-none" placeholder="Иванов Иван Иванович">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-alfa-textGray mb-2">Telegram ID <span class="text-alfa-textGray">(необязательно)</span></label>
+                    <input type="number" id="newManagerTgId" class="w-full bg-[#0B0B0B] border border-[#2A2A2A] rounded-xl p-3 text-white focus:border-alfa-red focus:outline-none" placeholder="123456789">
+                </div>
+                <button type="submit" class="w-full bg-alfa-red text-white font-semibold py-3.5 rounded-xl hover:bg-alfa-redHover transition-all shadow-lg shadow-red-900/20">
+                    Создать менеджера
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- ==================== ACCESS MODAL ==================== -->
+    <div id="accessModal" class="fixed inset-0 z-[60] hidden">
+        <div class="absolute inset-0 bg-black/80 backdrop-blur-sm" onclick="closeAccessModal()"></div>
+        <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md bg-[#141414] rounded-2xl border border-[#2A2A2A] shadow-2xl p-6">
+            <div class="flex justify-between items-center mb-6">
+                <h3 class="text-lg font-semibold text-white">Настройка доступа</h3>
+                <button onclick="closeAccessModal()" class="text-alfa-textGray hover:text-white"><i data-lucide="x" class="w-6 h-6"></i></button>
+            </div>
+            <div class="mb-6">
+                <p class="text-xs text-alfa-textGray uppercase tracking-wider mb-1">Менеджер</p>
+                <p class="text-white font-medium text-lg" id="accessModalName"></p>
+            </div>
+            <form id="accessForm" class="space-y-5">
+                <input type="hidden" id="accessModalId">
+                <div>
+                    <label class="block text-sm font-medium text-alfa-textGray mb-2">Логин</label>
+                    <input type="text" id="accessModalLogin" required class="w-full bg-[#0B0B0B] border border-[#2A2A2A] rounded-xl p-3 text-white focus:border-alfa-red focus:outline-none" placeholder="login">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-alfa-textGray mb-2">Пароль</label>
+                    <input type="text" id="accessModalPassword" required class="w-full bg-[#0B0B0B] border border-[#2A2A2A] rounded-xl p-3 text-white focus:border-alfa-red focus:outline-none" placeholder="Новый пароль">
+                </div>
+                <button type="submit" class="w-full bg-alfa-red text-white font-semibold py-3.5 rounded-xl hover:bg-alfa-redHover transition-all shadow-lg shadow-red-900/20">
+                    Сохранить
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- ==================== DELETE CONFIRM MODAL ==================== -->
+    <div id="deleteModal" class="fixed inset-0 z-[60] hidden">
+        <div class="absolute inset-0 bg-black/80 backdrop-blur-sm" onclick="closeDeleteModal()"></div>
+        <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md bg-[#141414] rounded-2xl border border-red-500/30 shadow-2xl p-6">
+            <div class="text-center mb-6">
+                <div class="w-14 h-14 rounded-full bg-red-500/10 flex items-center justify-center mx-auto mb-4">
+                    <i data-lucide="alert-triangle" class="w-7 h-7 text-red-500"></i>
+                </div>
+                <h3 class="text-lg font-semibold text-white">Удалить менеджера?</h3>
+                <p class="text-sm text-alfa-textGray mt-2" id="deleteModalText"></p>
+            </div>
+            <div class="flex gap-3">
+                <button onclick="closeDeleteModal()" class="flex-1 py-3 px-4 border border-alfa-border rounded-xl text-white font-medium hover:bg-white/5 transition-colors">Отмена</button>
+                <button onclick="confirmDelete()" class="flex-1 py-3 px-4 bg-red-600 rounded-xl text-white font-semibold hover:bg-red-700 transition-colors">Удалить</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Container -->
+    <div id="toastContainer" class="fixed bottom-6 right-6 z-[70] space-y-2"></div>
+
+    <script>
+        lucide.createIcons();
+        const token = localStorage.getItem('token');
+        const role = localStorage.getItem('role');
+        if (!token || role !== 'admin') { window.location.href = '/'; }
+
+        let managersData = [];
+        let selectedCsvFile = null;
+        let deleteManagerId = null;
+        let currentSection = 'managers';
+
+        // --- Toast ---
+        function showToast(message, type = 'success') {
+            const container = document.getElementById('toastContainer');
+            const toast = document.createElement('div');
+            const colors = { success: 'bg-green-600', error: 'bg-red-600', info: 'bg-blue-600' };
+            toast.className = `toast ${colors[type] || colors.info} text-white px-5 py-3 rounded-xl shadow-2xl text-sm font-medium max-w-sm`;
+            toast.textContent = message;
+            container.appendChild(toast);
+            setTimeout(() => { toast.remove(); }, 4000);
+        }
+
+        // --- Sections ---
+        function showSection(name) {
+            currentSection = name;
+            document.querySelectorAll('[id^="section-"]').forEach(s => s.classList.add('hidden'));
+            document.querySelectorAll('.section-btn').forEach(b => { b.classList.remove('active'); b.classList.add('text-alfa-textGray'); });
+            
+            const section = document.getElementById('section-' + name);
+            const btn = document.getElementById('btn-' + name);
+            if (section) { section.classList.remove('hidden'); section.classList.add('fade-in'); }
+            if (btn) { btn.classList.add('active'); btn.classList.remove('text-alfa-textGray'); }
+            lucide.createIcons();
+            
+            if (name === 'supervisor') loadSupervisorLink();
+        }
+
+        // --- API Helper ---
+        async function api(url, options = {}) {
+            const res = await fetch(url, {
+                ...options,
+                headers: { 'Authorization': `Bearer ${token}`, ...(options.headers || {}) }
+            });
+            if (res.status === 401) { logout(); return null; }
+            return res;
+        }
+
+        // ==================== MANAGERS ====================
+        async function loadManagers() {
+            try {
+                const res = await api('/admin/managers');
+                if (!res) return;
+                managersData = await res.json();
+                renderManagers(managersData);
+                populateManagerSelects(managersData);
+            } catch (e) { showToast('Ошибка загрузки менеджеров', 'error'); }
+            finally {
+                document.getElementById('managersLoading').classList.add('hidden');
+                document.getElementById('managersContainer').classList.remove('hidden');
+            }
+        }
+
+        function renderManagers(managers) {
+            const c = document.getElementById('managersContainer');
+            c.innerHTML = '';
+            if (!managers.length) {
+                c.innerHTML = '<div class="glass-card p-8 text-center"><p class="text-alfa-textGray">Нет менеджеров</p></div>';
+                return;
+            }
+            managers.forEach(m => {
+                const statusBadge = m.is_active
+                    ? '<span class="px-2 py-1 rounded-lg text-xs font-medium bg-green-500/10 text-green-400 border border-green-500/20">Активен</span>'
+                    : '<span class="px-2 py-1 rounded-lg text-xs font-medium bg-red-500/10 text-red-400 border border-red-500/20">Неактивен</span>';
+                const tgBadge = m.has_telegram
+                    ? '<span class="px-2 py-1 rounded-lg text-xs font-medium bg-blue-500/10 text-blue-400 border border-blue-500/20">TG</span>'
+                    : '';
+                const sheetBadge = m.has_sheet
+                    ? `<a href="https://docs.google.com/spreadsheets/d/${m.google_sheet_id}" target="_blank" class="px-2 py-1 rounded-lg text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 transition-colors">Sheet</a>`
+                    : '';
+                const webBadge = m.login
+                    ? `<span class="px-2 py-1 rounded-lg text-xs font-medium bg-purple-500/10 text-purple-400 border border-purple-500/20">${m.login}</span>`
+                    : '<span class="text-xs text-alfa-textGray">Нет доступа</span>';
+                const roleBadge = m.role === 'admin' ? '<span class="px-2 py-1 rounded-lg text-xs font-bold bg-alfa-red/20 text-alfa-red border border-alfa-red/30">ADMIN</span>' : '';
+
+                const div = document.createElement('div');
+                div.className = 'glass-card p-4 hover:bg-white/[0.02] transition-colors';
+                div.innerHTML = `
+                    <div class="flex flex-col sm:flex-row sm:items-center gap-3">
+                        <div class="flex items-center gap-3 flex-1 min-w-0">
+                            <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-white/10 to-white/5 flex items-center justify-center text-white font-bold shrink-0 border border-white/10">${m.full_name[0]}</div>
+                            <div class="min-w-0">
+                                <p class="font-medium text-white truncate">${m.full_name}</p>
+                                <p class="text-xs text-alfa-textGray font-mono">ID: ${m.id}${m.telegram_id ? ' | TG: ' + m.telegram_id : ''}</p>
+                            </div>
+                        </div>
+                        <div class="flex flex-wrap gap-1.5 items-center">
+                            ${statusBadge} ${tgBadge} ${sheetBadge} ${roleBadge}
+                        </div>
+                        <div class="flex flex-wrap gap-1.5 items-center">
+                            ${webBadge}
+                        </div>
+                        <div class="flex gap-2 shrink-0">
+                            <button onclick="openAccessModal(${m.id}, '${m.full_name.replace(/'/g, "\\'")}', '${(m.login || '').replace(/'/g, "\\'")}')" class="text-xs font-medium bg-white/5 text-white px-3 py-2 rounded-lg hover:bg-white/10 transition-colors border border-alfa-border" title="Доступ">
+                                <i data-lucide="key" class="w-3.5 h-3.5"></i>
+                            </button>
+                            <button onclick="toggleManager(${m.id})" class="text-xs font-medium px-3 py-2 rounded-lg transition-colors border border-alfa-border ${m.is_active ? 'bg-white/5 text-orange-400 hover:bg-orange-500/10' : 'bg-white/5 text-green-400 hover:bg-green-500/10'}" title="${m.is_active ? 'Деактивировать' : 'Активировать'}">
+                                <i data-lucide="${m.is_active ? 'pause' : 'play'}" class="w-3.5 h-3.5"></i>
+                            </button>
+                            ${!m.is_active ? `<button onclick="openDeleteModal(${m.id}, '${m.full_name.replace(/'/g, "\\'")}')" class="text-xs font-medium bg-white/5 text-red-400 px-3 py-2 rounded-lg hover:bg-red-500/10 transition-colors border border-red-500/20" title="Удалить"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>` : ''}
+                        </div>
+                    </div>
+                `;
+                c.appendChild(div);
+            });
+            lucide.createIcons();
+        }
+
+        function populateManagerSelects(managers) {
+            const active = managers.filter(m => m.is_active);
+            ['csvManagerSelect', 'dnManagerSelect', 'updateOneManager'].forEach(id => {
+                const sel = document.getElementById(id);
+                if (!sel) return;
+                sel.innerHTML = '<option value="">-- Выберите менеджера --</option>';
+                active.forEach(m => {
+                    sel.innerHTML += `<option value="${m.id}">${m.full_name}</option>`;
+                });
+            });
+        }
+
+        // Add Manager
+        function openAddManagerModal() { document.getElementById('addManagerModal').classList.remove('hidden'); }
+        function closeAddManagerModal() { document.getElementById('addManagerModal').classList.add('hidden'); document.getElementById('addManagerForm').reset(); }
+        
+        document.getElementById('addManagerForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const btn = e.target.querySelector('button[type="submit"]');
+            btn.disabled = true; btn.textContent = 'Создаю...';
+            try {
+                const body = { full_name: document.getElementById('newManagerName').value };
+                const tgId = document.getElementById('newManagerTgId').value;
+                if (tgId) body.telegram_id = parseInt(tgId);
+                
+                const res = await api('/admin/add_manager', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+                const data = await res.json();
+                if (res.ok) { showToast(data.message); closeAddManagerModal(); loadManagers(); }
+                else showToast(data.detail || 'Ошибка', 'error');
+            } catch (e) { showToast('Ошибка сети', 'error'); }
+            finally { btn.disabled = false; btn.textContent = 'Создать менеджера'; }
+        });
+
+        // Toggle Manager
+        async function toggleManager(id) {
+            try {
+                const res = await api(`/admin/toggle_manager/${id}`, { method: 'POST' });
+                const data = await res.json();
+                if (res.ok) { showToast(data.message); loadManagers(); }
+                else showToast(data.detail || 'Ошибка', 'error');
+            } catch (e) { showToast('Ошибка', 'error'); }
+        }
+
+        // Delete Manager
+        function openDeleteModal(id, name) {
+            deleteManagerId = id;
+            document.getElementById('deleteModalText').textContent = `${name} будет удален из базы. Google таблица останется.`;
+            document.getElementById('deleteModal').classList.remove('hidden');
+            lucide.createIcons();
+        }
+        function closeDeleteModal() { document.getElementById('deleteModal').classList.add('hidden'); deleteManagerId = null; }
+        async function confirmDelete() {
+            if (!deleteManagerId) return;
+            try {
+                const res = await api(`/admin/manager/${deleteManagerId}`, { method: 'DELETE' });
+                const data = await res.json();
+                if (res.ok) { showToast(data.message); loadManagers(); }
+                else showToast(data.detail || 'Ошибка', 'error');
+            } catch (e) { showToast('Ошибка', 'error'); }
+            closeDeleteModal();
+        }
+
+        // Access Modal
+        function openAccessModal(id, name, login) {
+            document.getElementById('accessModalId').value = id;
+            document.getElementById('accessModalName').textContent = name;
+            document.getElementById('accessModalLogin').value = login;
+            document.getElementById('accessModalPassword').value = '';
+            document.getElementById('accessModal').classList.remove('hidden');
+        }
+        function closeAccessModal() { document.getElementById('accessModal').classList.add('hidden'); }
+        
+        document.getElementById('accessForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const btn = e.target.querySelector('button[type="submit"]');
+            btn.disabled = true; btn.textContent = 'Сохранение...';
+            try {
+                const res = await api('/admin/create_access', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        manager_id: parseInt(document.getElementById('accessModalId').value),
+                        login: document.getElementById('accessModalLogin').value,
+                        password: document.getElementById('accessModalPassword').value
+                    })
+                });
+                const data = await res.json();
+                if (res.ok) { showToast('Доступ сохранен'); closeAccessModal(); loadManagers(); }
+                else showToast(data.detail || 'Ошибка', 'error');
+            } catch (e) { showToast('Ошибка сети', 'error'); }
+            finally { btn.disabled = false; btn.textContent = 'Сохранить'; }
+        });
+
+        // ==================== SUPERVISOR ====================
+        async function loadSupervisorLink() {
+            try {
+                const res = await api('/admin/supervisor_sheet');
+                if (!res) return;
+                const data = await res.json();
+                document.getElementById('supervisorLink').href = data.url;
+            } catch (e) { console.error(e); }
+        }
+
+        // ==================== CSV IMPORT ====================
+        function handleFileSelect(input) {
+            selectedCsvFile = input.files[0];
+            if (selectedCsvFile) {
+                document.getElementById('csvFileName').textContent = selectedCsvFile.name;
+                checkCsvReady();
+            }
+        }
+        function handleDrop(e) {
+            e.preventDefault();
+            e.target.closest('#csvDropZone').classList.remove('drag-over');
+            selectedCsvFile = e.dataTransfer.files[0];
+            if (selectedCsvFile) {
+                document.getElementById('csvFileName').textContent = selectedCsvFile.name;
+                checkCsvReady();
+            }
+        }
+        function checkCsvReady() {
+            const btn = document.getElementById('csvImportBtn');
+            btn.disabled = !(selectedCsvFile && document.getElementById('csvManagerSelect').value);
+        }
+        document.getElementById('csvManagerSelect').addEventListener('change', checkCsvReady);
+
+        async function startCsvImport() {
+            const managerId = document.getElementById('csvManagerSelect').value;
+            if (!managerId || !selectedCsvFile) return;
+            
+            const btn = document.getElementById('csvImportBtn');
+            btn.disabled = true; btn.textContent = 'Загрузка...';
+            
+            const formData = new FormData();
+            formData.append('file', selectedCsvFile);
+            formData.append('manager_id', managerId);
+            
+            try {
+                const res = await fetch('/admin/import_csv', {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}` },
+                    body: formData
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    showToast(`Импорт запущен: ${data.total_rows} строк`);
+                    pollTaskStatus(data.task_id, 'csv');
+                } else {
+                    showToast(data.detail || 'Ошибка', 'error');
+                    btn.disabled = false; btn.textContent = 'Начать импорт';
+                }
+            } catch (e) { showToast('Ошибка', 'error'); btn.disabled = false; btn.textContent = 'Начать импорт'; }
+        }
+
+        // ==================== DATANEWTON ====================
+        async function startDataNewtonUpdate() {
+            const managerId = document.getElementById('dnManagerSelect').value;
+            if (!managerId) { showToast('Выберите менеджера', 'info'); return; }
+            
+            const btn = document.getElementById('dnUpdateBtn');
+            btn.disabled = true; btn.textContent = 'Запуск...';
+            
+            try {
+                const res = await api(`/admin/update_datanewton/${managerId}`, { method: 'POST' });
+                const data = await res.json();
+                if (res.ok) {
+                    showToast('Обновление запущено');
+                    pollTaskStatus(data.task_id, 'dn');
+                } else {
+                    showToast(data.detail || 'Ошибка', 'error');
+                    btn.disabled = false; btn.textContent = 'Запустить обновление';
+                }
+            } catch (e) { showToast('Ошибка', 'error'); btn.disabled = false; btn.textContent = 'Запустить обновление'; }
+        }
+
+        // ==================== POLL TASK STATUS ====================
+        async function pollTaskStatus(taskId, type) {
+            const progressEl = document.getElementById(type + 'Progress');
+            const barEl = document.getElementById(type + 'ProgressBar');
+            const labelEl = document.getElementById(type + 'ProgressLabel');
+            const countEl = document.getElementById(type + 'ProgressCount');
+            const resultEl = document.getElementById(type + 'Result');
+            
+            progressEl.classList.remove('hidden');
+            resultEl.classList.add('hidden');
+            
+            const poll = async () => {
+                try {
+                    const res = await api(`/admin/import_status/${taskId}`);
+                    if (!res) return;
+                    const data = await res.json();
+                    
+                    const pct = data.total > 0 ? Math.round((data.processed / data.total) * 100) : 0;
+                    barEl.style.width = pct + '%';
+                    countEl.textContent = `${data.processed} / ${data.total}`;
+                    
+                    if (data.status === 'completed') {
+                        labelEl.textContent = 'Завершено!';
+                        barEl.style.width = '100%';
+                        resultEl.classList.remove('hidden');
+                        resultEl.innerHTML = `
+                            <p class="text-green-400">Успешно: ${data.success || data.updated || 0}</p>
+                            ${data.skipped ? `<p class="text-alfa-textGray">Пропущено: ${data.skipped}</p>` : ''}
+                            ${data.errors ? `<p class="text-red-400">Ошибок: ${data.errors}</p>` : ''}
+                        `;
+                        showToast('Задача завершена');
+                        // Re-enable buttons
+                        if (type === 'csv') { const b = document.getElementById('csvImportBtn'); b.disabled = false; b.textContent = 'Начать импорт'; }
+                        if (type === 'dn') { const b = document.getElementById('dnUpdateBtn'); b.disabled = false; b.textContent = 'Запустить обновление'; }
+                        return;
+                    }
+                    
+                    setTimeout(poll, 3000);
+                } catch (e) { setTimeout(poll, 5000); }
+            };
+            
+            setTimeout(poll, 2000);
+        }
+
+        // ==================== UPDATE ONE COMPANY ====================
+        async function updateOneCompany() {
+            const inn = document.getElementById('updateOneInn').value.trim();
+            const managerId = document.getElementById('updateOneManager').value;
+            const resultEl = document.getElementById('updateOneResult');
+            
+            if (!inn || !managerId) { showToast('Заполните все поля', 'info'); return; }
+            
+            const btn = document.getElementById('updateOneBtn');
+            btn.disabled = true; btn.textContent = 'Обновление...';
+            resultEl.classList.add('hidden');
+            
+            try {
+                const res = await api('/admin/update_one_company', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ inn, manager_id: parseInt(managerId) })
+                });
+                const data = await res.json();
+                
+                resultEl.classList.remove('hidden');
+                if (res.ok) {
+                    resultEl.innerHTML = `<div class="glass-card p-4 border-green-500/20"><p class="text-green-400 font-medium">Данные обновлены</p><p class="text-sm text-alfa-textGray mt-1">${data.company_name || ''} | ${data.manager || ''}</p></div>`;
+                    showToast('Данные обновлены');
+                } else {
+                    resultEl.innerHTML = `<div class="glass-card p-4 border-red-500/20"><p class="text-red-400">${data.detail || 'Ошибка'}</p></div>`;
+                }
+            } catch (e) { showToast('Ошибка сети', 'error'); }
+            finally { btn.disabled = false; btn.textContent = 'Обновить данные'; }
+        }
+
+        // --- Utils ---
+        function logout() { localStorage.clear(); window.location.href = '/'; }
+
+        // --- Init ---
+        loadManagers();
+    </script>
+</body>
+</html>

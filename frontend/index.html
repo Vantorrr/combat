@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="ru" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Alfa CRM - Вход</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        alfa: { red: '#EF3124', redHover: '#D92B1E', black: '#0B0B0B', textGray: '#999999', border: '#2A2A2A' }
+                    },
+                    fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] }
+                }
+            }
+        }
+    </script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0B0B0B; color: white; }
+        .glass-input {
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid #2A2A2A;
+            color: white;
+            transition: all 0.2s ease;
+        }
+        .glass-input:focus { border-color: #EF3124; outline: none; background: rgba(255, 255, 255, 0.07); }
+        .glass-input::placeholder { color: #555; }
+        .glow { box-shadow: 0 0 80px 20px rgba(239, 49, 36, 0.08); }
+    </style>
+</head>
+<body class="h-screen flex items-center justify-center px-4">
+    <div class="w-full max-w-sm">
+        <!-- Logo -->
+        <div class="text-center mb-12">
+            <div class="w-16 h-16 bg-alfa-red rounded-2xl flex items-center justify-center mx-auto mb-5 shadow-2xl shadow-red-900/30 glow">
+                <span class="text-white font-extrabold text-2xl">A</span>
+            </div>
+            <h1 class="text-3xl font-bold tracking-tight">Alfa<span class="text-alfa-red">CRM</span></h1>
+            <p class="text-alfa-textGray text-xs uppercase tracking-[0.2em] mt-2 font-medium">Premium Access</p>
+        </div>
+
+        <form id="loginForm" class="space-y-5">
+            <div>
+                <label class="block text-xs font-medium text-alfa-textGray mb-2 ml-1 uppercase tracking-wider">Логин</label>
+                <input type="text" id="username" name="username" required autocomplete="username"
+                    class="glass-input w-full rounded-xl px-4 py-3.5 text-sm"
+                    placeholder="Введите логин">
+            </div>
+            
+            <div>
+                <label class="block text-xs font-medium text-alfa-textGray mb-2 ml-1 uppercase tracking-wider">Пароль</label>
+                <input type="password" id="password" name="password" required autocomplete="current-password"
+                    class="glass-input w-full rounded-xl px-4 py-3.5 text-sm"
+                    placeholder="Введите пароль">
+            </div>
+
+            <button type="submit" id="loginBtn"
+                class="w-full bg-alfa-red text-white font-semibold py-4 rounded-xl hover:bg-alfa-redHover active:scale-[0.98] transition-all shadow-lg shadow-red-900/20 mt-2">
+                Войти
+            </button>
+        </form>
+        
+        <div id="error" class="mt-5 text-red-400 text-sm text-center hidden bg-red-500/10 py-3 rounded-xl border border-red-500/20"></div>
+        
+        <p class="mt-10 text-center text-[11px] text-alfa-textGray/40">&copy; 2026 Alfa CRM System</p>
+    </div>
+
+    <script>
+        // Auto-redirect if already logged in
+        const existingToken = localStorage.getItem('token');
+        const existingRole = localStorage.getItem('role');
+        if (existingToken) {
+            // Verify token is still valid
+            fetch('/api/health').then(() => {
+                if (existingRole === 'admin') window.location.href = '/admin.html';
+                else window.location.href = '/dashboard.html';
+            }).catch(() => {
+                localStorage.clear();
+            });
+        }
+
+        document.getElementById('loginForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const btn = document.getElementById('loginBtn');
+            const originalText = btn.innerText;
+            
+            btn.innerHTML = '<div class="animate-spin h-5 w-5 border-2 border-white rounded-full border-t-transparent mx-auto"></div>';
+            btn.disabled = true;
+            
+            const formData = new FormData(e.target);
+            
+            try {
+                const response = await fetch('/token', { method: 'POST', body: formData });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    localStorage.setItem('token', data.access_token);
+                    localStorage.setItem('role', data.role);
+                    localStorage.setItem('name', data.name);
+                    
+                    if (data.role === 'admin') {
+                        window.location.href = '/admin.html';
+                    } else {
+                        window.location.href = '/dashboard.html';
+                    }
+                } else {
+                    showError('Неверный логин или пароль');
+                    resetBtn();
+                }
+            } catch (err) {
+                showError('Ошибка соединения с сервером');
+                resetBtn();
+            }
+            
+            function resetBtn() { btn.innerHTML = originalText; btn.disabled = false; }
+            function showError(msg) {
+                const errDiv = document.getElementById('error');
+                errDiv.textContent = msg;
+                errDiv.classList.remove('hidden');
+                setTimeout(() => errDiv.classList.add('hidden'), 4000);
+            }
+        });
+    </script>
+</body>
+</html>
