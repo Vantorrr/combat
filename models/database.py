@@ -83,7 +83,14 @@ async def init_db(database_url: str):
         ssl_ctx.verify_mode = _ssl.CERT_NONE
         connect_args["ssl"] = ssl_ctx
     
-    async_engine = create_async_engine(database_url, echo=False, connect_args=connect_args)
+    async_engine = create_async_engine(
+        database_url, 
+        echo=False, 
+        connect_args=connect_args,
+        pool_size=10,
+        max_overflow=20,
+        pool_pre_ping=True
+    )
     AsyncSessionLocal = async_sessionmaker(async_engine, expire_on_commit=False)
     
     # Создаем таблицы
