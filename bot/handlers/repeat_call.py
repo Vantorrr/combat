@@ -232,8 +232,8 @@ async def process_repeat_inn(message: Message, state: FSMContext, session: Async
             ])
             
             if len(ai_text) > 4000:
-                ai_text = ai_text[:4000] + "...\n<i>(текст обрезан)</i>"
-            await message.answer(ai_text, reply_markup=kb, parse_mode="HTML")
+                ai_text = ai_text[:4000] + "..."
+            await message.answer(ai_text, reply_markup=kb)
         except Exception as e:
             logger.warning(f"[repeat_call] AI pre-call notification failed: {e}")
     
