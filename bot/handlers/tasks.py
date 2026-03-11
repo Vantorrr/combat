@@ -175,12 +175,16 @@ async def show_next_task(message: types.Message, state: FSMContext, user_id: int
         f"🆔 ИНН: <code>{inn}</code>\n"
         f"👤 Контакт: <b>{contact_name}</b>\n"
         f"📱 Телефон: <b>{phone}</b>\n\n"
-        f"💬 <b>Последний комментарий:</b>\n{last_comment[:300] + '...' if len(last_comment) > 300 else last_comment}\n"
+        f"💬 <b>Последний комментарий:</b>\n{last_comment[:800] + '...' if len(last_comment) > 800 else last_comment}\n"
     )
     
     # Кнопки
     kb = get_task_keyboard(inn)
     
+    # Защита от превышения лимита Telegram (4096 символов)
+    if len(info_text) > 4000:
+        info_text = info_text[:4000] + "...\n<i>(комментарий обрезан)</i>"
+
     try:
         sent_msg = await message.edit_text(info_text, reply_markup=kb, parse_mode="HTML")
     except Exception as e:

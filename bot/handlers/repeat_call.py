@@ -140,7 +140,7 @@ async def process_repeat_inn(message: Message, state: FSMContext, session: Async
     # Компания найдена - показываем базовую информацию
     await state.set_state(RepeatCallStates.waiting_for_comment)
     
-    comment_preview = last_comment[:200] + "..." if last_comment and len(last_comment) > 200 else (last_comment or "Нет")
+    comment_preview = last_comment[:800] + "..." if last_comment and len(last_comment) > 800 else (last_comment or "Нет")
     
     await message.answer(
         f"✅ Найдена компания:\n\n"
@@ -231,7 +231,9 @@ async def process_repeat_inn(message: Message, state: FSMContext, session: Async
                 [InlineKeyboardButton(text="💬 Спросить ИИ (Чат)", callback_data="ask_ai")]
             ])
             
-            await message.answer(ai_text, reply_markup=kb)
+            if len(ai_text) > 4000:
+                ai_text = ai_text[:4000] + "...\n<i>(текст обрезан)</i>"
+            await message.answer(ai_text, reply_markup=kb, parse_mode="HTML")
         except Exception as e:
             logger.warning(f"[repeat_call] AI pre-call notification failed: {e}")
     
