@@ -14,10 +14,11 @@ router = Router()
 
 
 @router.message(Command("start"))
-async def cmd_start(message: Message, session: AsyncSession):
+async def cmd_start(message: Message, state: FSMContext, session: AsyncSession):
     """Обработчик команды /start"""
     user_id = message.from_user.id
     logger.info(f"User {user_id} (@{message.from_user.username}) started bot")
+    await state.clear()  # Сбрасываем любое зависшее состояние
     
     # Проверяем, является ли пользователь администратором
     if user_id in settings.admin_ids_list:
