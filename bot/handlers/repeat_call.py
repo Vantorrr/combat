@@ -401,23 +401,37 @@ async def save_repeat_call(message: Message, state: FSMContext, session: AsyncSe
                 await state.clear()
 
         else:
-            await message.answer(
-                "⚠️ Данные сохранены локально, но возникла ошибка при обновлении Google Sheets.\n"
-                "Обратитесь к администратору.",
-                reply_markup=get_main_menu()
-            )
-            if not data.get('is_task_flow'):
+            if data.get('is_task_flow'):
+                # При ошибке в режиме задач — инкрементируем индекс чтобы не застрять на одной задаче
+                current_index = data.get('task_index', 0)
+                await state.update_data(task_index=current_index + 1)
+                kb = InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="➡️ Следующая задача", callback_data="task_completed")],
+                    [InlineKeyboardButton(text="🔙 Главное меню", callback_data="main_menu")]
+                ])
+                await message.answer(
+                    "⚠️ Данные сохранены локально, но возникла ошибка при обновлении Google Sheets.\n"
+                    "Обратитесь к администратору.",
+                    reply_markup=kb
+                )
+            else:
+                await message.answer(
+                    "⚠️ Данные сохранены локально, но возникла ошибка при обновлении Google Sheets.\n"
+                    "Обратитесь к администратору.",
+                    reply_markup=get_main_menu()
+                )
                 await state.clear()
-                
+
     except Exception as e:
         import traceback
         logger.error(f"Error updating Google Sheets: {e}")
         logger.error(f"Traceback: {traceback.format_exc()}")
-        
+
         if data.get('is_task_flow'):
-            # В режиме задач не теряем контекст
+            # При исключении тоже инкрементируем — чтобы не зависнуть
+            current_index = data.get('task_index', 0)
+            await state.update_data(task_index=current_index + 1)
             kb = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="🔄 Повторить", callback_data=f"task_done:{data.get('inn', '')}")],
                 [InlineKeyboardButton(text="➡️ Следующая задача", callback_data="task_completed")],
                 [InlineKeyboardButton(text="🔙 Главное меню", callback_data="main_menu")]
             ])
